@@ -212,7 +212,6 @@ dependencies:
   - zstd=1.5.5=hc292b87_2
   - pip:
       - beautifulsoup4==4.12.3
-      - clip==1.0
       - einops==0.8.0
       - fastjsonschema==2.19.1
       - fsspec==2024.5.0

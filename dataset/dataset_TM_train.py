@@ -17,19 +17,20 @@ def collate_fn(batch):
 
 '''For use of training text-2-motion generative model'''
 class Text2MotionDataset(data.Dataset):
-    def __init__(self, dataset_name, feat_bias = 5, unit_length = 4, codebook_size = 1024, tokenizer_name=None, up_low_sep=False):
+    def __init__(self, dataset_name, feat_bias = 5, unit_length = 4, codebook_size = 1024, tokenizer_name=None, up_low_sep=False,multi_sep=False):
         
         self.max_length = 64
         self.pointer = 0
         self.dataset_name = dataset_name
         self.up_low_sep = up_low_sep
+        self.multi_sep = multi_sep
 
         self.unit_length = unit_length
         # self.mot_start_idx = codebook_size
         self.mot_end_idx = codebook_size
         self.mot_pad_idx = codebook_size + 1 # [TODO] I think 513 (codebook_size+1) can be what ever, it will be croped out
         if dataset_name == 't2m':
-            self.data_root = './dataset/HumanML3D'
+            self.data_root = '/extra/xielab0/araujog/motion-generation/HumanML3D'
             self.motion_dir = pjoin(self.data_root, 'new_joint_vecs')
             self.text_dir = pjoin(self.data_root, 'texts')
             self.joints_num = 22
@@ -130,8 +131,16 @@ class Text2MotionDataset(data.Dataset):
             else:
                 m_tokens = m_tokens[1:]
         m_tokens_len = m_tokens.shape[0]
-
-        if self.up_low_sep:
+        if self.multi_sep:
+            new_len = random.randint(20, self.max_motion_length-1)
+            len_mult = math.ceil(new_len/m_tokens_len)
+            m_tokens = np.tile(m_tokens, (len_mult, 1))[:new_len]
+            m_tokens_len = new_len
+            if m_tokens_len+1 < self.max_motion_length:
+                m_tokens = np.concatenate([m_tokens, np.ones((1, 5), dtype=int) * self.mot_end_idx, np.ones((self.max_motion_length-1-m_tokens_len, 5), dtype=int) * self.mot_pad_idx], axis=0)
+            else:
+                m_tokens = np.concatenate([m_tokens, np.ones((1, 5), dtype=int) * self.mot_end_idx], axis=0)
+        elif self.up_low_sep:
             new_len = random.randint(20, self.max_motion_length-1)
             len_mult = math.ceil(new_len/m_tokens_len)
             m_tokens = np.tile(m_tokens, (len_mult, 1))[:new_len]
@@ -152,9 +161,9 @@ class Text2MotionDataset(data.Dataset):
 
 def DATALoader(dataset_name,
                 batch_size, codebook_size, tokenizer_name, unit_length=4,
-                num_workers = 8, up_low_sep=False) : 
+                num_workers = 8, up_low_sep=False,multi_sep=False): 
 
-    train_loader = torch.utils.data.DataLoader(Text2MotionDataset(dataset_name, codebook_size = codebook_size, tokenizer_name = tokenizer_name, unit_length=unit_length, up_low_sep=up_low_sep),
+    train_loader = torch.utils.data.DataLoader(Text2MotionDataset(dataset_name, codebook_size = codebook_size, tokenizer_name = tokenizer_name, unit_length=unit_length, up_low_sep=up_low_sep,multi_sep=multi_sep),
                                               batch_size,
                                               shuffle=True,
                                               num_workers=num_workers,

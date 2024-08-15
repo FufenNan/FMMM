@@ -104,7 +104,9 @@ class MMM(torch.nn.Module):
     def forward(self, text, lengths=-1, rand_pos=True):
         b = len(text)
         feat_clip_text = clip.tokenize(text, truncate=True).cuda()
+        #feat_clip_text[b,512],word_emb[b,77,512]
         feat_clip_text, word_emb = clip_model(feat_clip_text)
+        #[b,50]
         index_motion = self.maskdecoder(feat_clip_text, word_emb, type="sample", m_length=lengths, rand_pos=rand_pos, if_test=False)
 
         m_token_length = torch.ceil((lengths)/4).int()
@@ -268,6 +270,7 @@ class MMM(torch.nn.Module):
         # __upper_text__ = ['A man punches with right hand.'] * 32
         text = clip.tokenize(upper_text, truncate=True).cuda()
         feat_clip_text, word_emb_clip = clip_model(text)
+        #?
         # index_motion = trans_encoder(feat_clip_text, idx_lower=target_lower_masked, word_emb=word_emb_clip, type="sample", m_length=pred_len, rand_pos=True, CFG=-1)
         index_motion = self.maskdecoder(feat_clip_text, target_lower_masked, word_emb_clip, type="sample", m_length=pred_len, rand_pos=True)
         for i in range(bs):

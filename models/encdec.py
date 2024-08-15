@@ -1,6 +1,5 @@
 import torch.nn as nn
 from models.resnet import Resnet1D
-
 class PrintModule(nn.Module):
     def __init__(self, me=''):
         super().__init__()
@@ -22,7 +21,6 @@ class Encoder(nn.Module):
                  activation='relu',
                  norm=None):
         super().__init__()
-        
         blocks = []
         filter_t, pad_t = stride_t * 2, stride_t // 2
         blocks.append(nn.Conv1d(input_emb_width, width, 3, 1, 1))

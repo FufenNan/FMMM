@@ -27,7 +27,7 @@ class Text2MotionDataset(data.Dataset):
         self.unit_length = unit_length
         self.w_vectorizer = w_vectorizer
         if dataset_name == 't2m':
-            self.data_root = './dataset/HumanML3D'
+            self.data_root = '/extra/xielab0/araujog/motion-generation/HumanML3D'
             self.motion_dir = pjoin(self.data_root, 'new_joint_vecs')
             self.text_dir = pjoin(self.data_root, 'texts')
             self.joints_num = 22

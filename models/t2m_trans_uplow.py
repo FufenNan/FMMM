@@ -207,6 +207,7 @@ class Text2Motion_Transformer(nn.Module):
                 fc_rate=4):
         super().__init__()
         self.n_head = n_head
+        #[bs,50*6,1024]
         self.trans_base = CrossCondTransBase(vqvae, num_vq, embed_dim, clip_dim, block_size, num_layers, num_local_layer, n_head, drop_out_rate, fc_rate)
         self.trans_head = CrossCondTransHead(num_vq, embed_dim, block_size, num_layers, n_head, drop_out_rate, fc_rate)
         self.block_size = block_size
@@ -249,6 +250,7 @@ class Text2Motion_Transformer(nn.Module):
         # T2M-BD
         if src_mask is not None:
             src_mask = self.get_attn_mask(src_mask, att_txt, txt_mark)
+        #[bs,50,6,512]
         feat = self.trans_base(idx_upper, idx_lower, clip_feature, src_mask, word_emb)
         logits = self.trans_head(feat, src_mask)
 
@@ -576,11 +578,11 @@ class CrossCondTransBase(nn.Module):
             token_embeddings[..., :int(code_dim/2)][learn_idx_upper] = self.learn_tok_emb(idx_upper[learn_idx_upper]-self.vqvae.vqvae.num_code)
             token_embeddings[..., int(code_dim/2):][~learn_idx_lower] = self.vqvae.vqvae.quantizer_lower.dequantize(idx_lower[~learn_idx_lower]).requires_grad_(False) 
             token_embeddings[..., int(code_dim/2):][learn_idx_lower] = self.learn_tok_emb(idx_lower[learn_idx_lower]-self.vqvae.vqvae.num_code)
-            token_embeddings = self.to_emb(token_embeddings)
+            token_embeddings = self.to_emb(token_embeddings)#[bs,50,6*512] 
 
             if self.num_local_layer > 0:
                 word_emb = self.word_emb(word_emb)
-                token_embeddings = self.pos_embed(token_embeddings)
+                token_embeddings = self.pos_embed(token_embeddings)#[bs,50,6*512] 
                 for module in self.cross_att:
                     token_embeddings = module(token_embeddings, word_emb)
             token_embeddings = torch.cat([self.cond_emb(clip_feature).unsqueeze(1), token_embeddings], dim=1)
@@ -589,7 +591,7 @@ class CrossCondTransBase(nn.Module):
         for block in self.blocks:
             x = block(x, src_mask)
 
-        return x
+        return x#[bs,50,1024] 
 
 
 class CrossCondTransHead(nn.Module):
@@ -603,7 +605,6 @@ class CrossCondTransHead(nn.Module):
                 drop_out_rate=0.1, 
                 fc_rate=4):
         super().__init__()
-
         self.blocks = nn.Sequential(*[Block(embed_dim, block_size, n_head, drop_out_rate, fc_rate) for _ in range(num_layers)])
         self.ln_f = nn.LayerNorm(embed_dim)
         self.head = nn.Linear(embed_dim, num_vq, bias=False)

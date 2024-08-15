@@ -75,16 +75,16 @@ val_loader = dataset_TM_eval.DATALoader(args.dataname, False,
 ##### ---- Network ---- #####
 if args.sep_uplow:
     net = VQVAE_SEP(args, ## use args to define different parameters in different quantizers
-                        args.nb_code,
-                        args.code_dim,
-                        args.output_emb_width,
-                        args.down_t,
-                        args.stride_t,
-                        args.width,
-                        args.depth,
-                        args.dilation_growth_rate,
-                        args.vq_act,
-                        args.vq_norm,
+                        args.nb_code,#8192
+                        args.code_dim,#32
+                        args.output_emb_width,#512
+                        args.down_t,#2
+                        args.stride_t,#2
+                        args.width,#512
+                        args.depth,#3
+                        args.dilation_growth_rate,#3
+                        args.vq_act,#'relu'
+                        args.vq_norm,#None
                         {'mean': torch.from_numpy(train_loader.dataset.mean).cuda().float(), 
                         'std': torch.from_numpy(train_loader.dataset.std).cuda().float()},
                         True)
@@ -154,7 +154,7 @@ avg_recons, avg_perplexity, avg_commit = 0., 0., 0.
 best_fid, best_iter, best_div, best_top1, best_top2, best_top3, best_matching, writer, logger = eval_trans.evaluation_vqvae(args.out_dir, val_loader, net, logger, writer, 0, best_fid=1000, best_iter=0, best_div=100, best_top1=0, best_top2=0, best_top3=0, best_matching=100, eval_wrapper=eval_wrapper)
 
 for nb_iter in tqdm(range(1, args.total_iter + 1)):
-    
+    #[256,64,263]
     gt_motion = next(train_loader_iter)
     gt_motion = gt_motion.cuda().float() # bs, nb_joints, joints_dim, seq_len
     

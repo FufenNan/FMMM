@@ -12,6 +12,15 @@ import shutil
 import datetime
 import os
 import math
+import torch
+import numpy as np
+import argparse
+from os.path import join as pjoin
+import utils.paramUtil as paramUtil
+from utils.plot_script import *
+from utils.word_vectorizer import WordVectorizer, POS_enumerator
+from utils.motion_process import recover_from_ric
+from scipy.ndimage import gaussian_filter
 
 kit_bone = [[0, 11], [11, 12], [12, 13], [13, 14], [14, 15], [0, 16], [16, 17], [17, 18], [18, 19], [19, 20], [0, 1], [1, 2], [2, 3], [3, 4], [3, 5], [5, 6], [6, 7], [3, 8], [8, 9], [9, 10]]
 t2m_bone = [[0,2], [2,5],[5,8],[8,11],
@@ -30,6 +39,34 @@ def axis_standard(skeleton):
     skeleton[..., [1, 2]] = skeleton[..., [2, 1]]
     skeleton[..., [0, 1]] = skeleton[..., [1, 0]]
     return skeleton
+def plot_t2m(motion1, std, mean, dataset_name, length, result_path,npy_path=None,title=None,motion2=None, save_path=None):
+    motion1 = motion1 * std + mean
+    if dataset_name == 'kit':
+        first_total_standard = 60
+        bone_link = kit_bone
+        if motion2 is not None:
+            bone_link = kit_kit_bone
+        joints_num = 21
+        scale = 1/1000
+    else:
+        first_total_standard = 63
+        bone_link = t2m_bone
+        if motion2 is not None:
+            bone_link = t2m_t2m_bone
+        joints_num = 22
+        scale = 1#/1000
+    joint = recover_from_ric(torch.from_numpy(motion1).float(), joints_num).numpy()
+    joint = motion_temporal_filter(joint, sigma=1)
+    plot_3d_motion(result_path, paramUtil.t2m_kinematic_chain, joint, title='', fps=20)
+    if npy_path != "":
+        np.save(npy_path, joint)
+
+def motion_temporal_filter(motion, sigma=1):
+    motion = motion.reshape(motion.shape[0], -1)
+    # print(motion.shape)
+    for i in range(motion.shape[1]):
+        motion[:, i] = gaussian_filter(motion[:, i], sigma=sigma, mode="nearest")
+    return motion.reshape(motion.shape[0], -1, 3)
 
 def visualize_2motions(motion1, std, mean, dataset_name, length, motion2=None, save_path=None):
     motion1 = motion1 * std + mean
