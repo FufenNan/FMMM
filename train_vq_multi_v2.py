@@ -19,7 +19,7 @@ from utils.word_vectorizer import WordVectorizer
 from tqdm import tqdm
 from exit.utils import get_model, generate_src_mask, init_save_folder
 from models.vqvae_sep import VQVAE_SEP
-from models.vqvae_multi_v2 import VQVAE_MULTI_V2
+from models.vqvae_multi import VQVAE_MULTI_V2
 
 def update_lr_warm_up(optimizer, nb_iter, warm_up_iter, lr):
 
@@ -122,6 +122,7 @@ if args.resume_pth :
     logger.info('loading checkpoint from {}'.format(args.resume_pth))
     ckpt = torch.load(args.resume_pth, map_location='cpu')
     net.load_state_dict(ckpt['net'], strict=True)
+#net = torch.nn.DataParallel(net)
 net.train()
 net.cuda()
 

@@ -42,6 +42,7 @@ def get_args_parser():
     ## resume
     parser.add_argument("--resume-pth", type=str, default=None, help='resume pth for VQ')
     parser.add_argument("--resume-gpt", type=str, default=None, help='resume pth for GPT')
+    parser.add_argument('--teacher-pth', type=str, help='resume teacher pth for VQ')
     
     
     ## output directory 
@@ -59,5 +60,6 @@ def get_args_parser():
     
     parser.add_argument('--sep-uplow', action='store_true', help='whether seperte upper and lower body')
     parser.add_argument('--sep-multi', action='store_true', help='whether seperate multiple quantizers')
+    parser.add_argument('--codebook-name', type=str, help='name of pretrained codebook')
     
     return parser.parse_args()

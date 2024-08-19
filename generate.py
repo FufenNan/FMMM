@@ -1,9 +1,11 @@
 import torch
 import clip
 import models.vqvae as vqvae
+import models.vqvae_multi_v2 as vqvae_multi_v2
 from models.vqvae_sep import VQVAE_SEP
 import models.t2m_trans as trans
 import models.t2m_trans_uplow as trans_uplow
+import models.t2m_trans_multi as trans_multi
 import numpy as np
 from exit.utils import visualize_2motions
 import options.option_transformer as option_trans
@@ -34,33 +36,51 @@ class TextCLIP(torch.nn.Module):
         return enctxt, word_emb
 clip_model = TextCLIP(clip_model)
 
-def get_vqvae(args, is_upper_edit):
-    if not is_upper_edit:
-        return vqvae.HumanVQVAE(args, ## use args to define different parameters in different quantizers
-                            args.nb_code,
-                            args.code_dim,
-                            args.output_emb_width,
-                            args.down_t,
-                            args.stride_t,
-                            args.width,
-                            args.depth,
-                            args.dilation_growth_rate)
+def get_vqvae(args, is_upper_edit,is_multi_edit=False):
+    if is_upper_edit:
+            return VQVAE_SEP(args, ## use args to define different parameters in different quantizers
+                    args.nb_code,
+                    args.code_dim,
+                    args.output_emb_width,
+                    args.down_t,
+                    args.stride_t,
+                    args.width,
+                    args.depth,
+                    args.dilation_growth_rate,
+                    moment={'mean': torch.from_numpy(args.mean).cuda().float(), 
+                        'std': torch.from_numpy(args.std).cuda().float()},
+                    sep_decoder=True)
+    elif is_multi_edit:
+        return vqvae_multi_v2.VQVAE_MULTI_V2(args, ## use args to define different parameters in different quantizers
+                    args.nb_code,
+                    args.code_dim,
+                    args.output_emb_width,
+                    args.down_t,
+                    args.stride_t,
+                    args.width,
+                    args.depth,
+                    args.dilation_growth_rate,
+                    moment={'mean': torch.from_numpy(args.mean).cuda().float(), 
+                        'std': torch.from_numpy(args.std).cuda().float()},
+                    sep_decoder=True)
     else:
-        return VQVAE_SEP(args, ## use args to define different parameters in different quantizers
-                        args.nb_code,
-                        args.code_dim,
-                        args.output_emb_width,
-                        args.down_t,
-                        args.stride_t,
-                        args.width,
-                        args.depth,
-                        args.dilation_growth_rate,
-                        moment={'mean': torch.from_numpy(args.mean).cuda().float(), 
-                            'std': torch.from_numpy(args.std).cuda().float()},
-                        sep_decoder=True)
+        return vqvae.HumanVQVAE(args, ## use args to define different parameters in different quantizers
+                    args.nb_code,
+                    args.code_dim,
+                    args.output_emb_width,
+                    args.down_t,
+                    args.stride_t,
+                    args.width,
+                    args.depth,
+                    args.dilation_growth_rate)
 
-def get_maskdecoder(args, vqvae, is_upper_edit):
-    tranformer = trans if not is_upper_edit else trans_uplow
+
+def get_maskdecoder(args, vqvae, is_upper_edit, is_multi_edit=False):
+    tranformer=trans
+    if is_upper_edit:
+        tranformer=trans_uplow
+    elif is_multi_edit:
+        tranformer=trans_multi
     return tranformer.Text2Motion_Transformer(vqvae,
                                 num_vq=args.nb_code, 
                                 embed_dim=args.embed_dim_gpt, 
@@ -73,17 +93,17 @@ def get_maskdecoder(args, vqvae, is_upper_edit):
                                 fc_rate=args.ff_rate)
 
 class MMM(torch.nn.Module):
-    def __init__(self, args=None, is_upper_edit=False):
+    def __init__(self, args=None, is_upper_edit=False,is_multi_edit=False):
         super().__init__()
         self.is_upper_edit = is_upper_edit
 
 
         args.dataname = args.dataset_name = 't2m'
 
-        self.vqvae = get_vqvae(args, is_upper_edit)
+        self.vqvae = get_vqvae(args, is_upper_edit,is_multi_edit)
         ckpt = torch.load(args.resume_pth, map_location='cpu')
         self.vqvae.load_state_dict(ckpt['net'], strict=True)
-        if is_upper_edit:
+        if is_upper_edit or is_multi_edit:
             class VQVAE_WRAPPER(torch.nn.Module):
                 def __init__(self, vqvae) :
                     super().__init__()
@@ -95,12 +115,25 @@ class MMM(torch.nn.Module):
         self.vqvae.eval()
         self.vqvae.cuda()
 
-        self.maskdecoder = get_maskdecoder(args, self.vqvae, is_upper_edit)
+        self.maskdecoder = get_maskdecoder(args, self.vqvae,is_upper_edit,is_multi_edit)
         ckpt = torch.load(args.resume_trans, map_location='cpu')
         self.maskdecoder.load_state_dict(ckpt['trans'], strict=True)
         self.maskdecoder.eval()
         self.maskdecoder.cuda()
+    def multi_generate(self, text, lengths=-1, rand_pos=True):
+        b = len(text)
+        feat_clip_text = clip.tokenize(text, truncate=True).cuda()
+        #feat_clip_text[b,512],word_emb[b,77,512]
+        feat_clip_text, word_emb = clip_model(feat_clip_text)
+        #[b,50]
+        index_motion = self.maskdecoder(feat_clip_text, word_emb, type="generate", m_length=lengths, rand_pos=rand_pos, if_test=False)
 
+        m_token_length = torch.ceil((lengths)/4).int()
+        pred_pose_all = torch.zeros((b, 196, 263)).cuda()
+        for k in range(b):
+            pred_pose = self.vqvae(index_motion[k:k+1, :m_token_length[k]], type='decode')
+            pred_pose_all[k:k+1, :int(lengths[k].item())] = pred_pose
+        return pred_pose_all
     def forward(self, text, lengths=-1, rand_pos=True):
         b = len(text)
         feat_clip_text = clip.tokenize(text, truncate=True).cuda()
@@ -278,6 +311,57 @@ class MMM(torch.nn.Module):
                 index_motion[i:i+1, :int(pred_tok_len[i].item()), None],
                 target_lower[i:i+1, :int(pred_tok_len[i].item()), None]
             ], axis=-1)
+            pred_pose = self.vqvae(all_tokens, type='decode')
+            pred_pose_eval[i:i+1, :int(pred_len[i].item())] = pred_pose
+
+        return pred_pose_eval
+    def multi_edit(self, pose, m_length, upper_text, pred_idx=None,target_mask=None):
+        pose = pose.clone().cuda().float() # bs, nb_joints, joints_dim, seq_len
+        m_tokens_len = torch.ceil((m_length)/4)
+        bs, seq = pose.shape[:2]
+        max_motion_length = int(seq/4) + 1
+        mot_end_idx = self.vqvae.vqvae.num_code
+        mot_pad_idx = self.vqvae.vqvae.num_code + 1
+        mask_id = self.vqvae.vqvae.num_code + 2
+        target_gt = []
+        for k in range(bs):
+            target = self.vqvae(pose[k:k+1, :m_length[k]], type='encode')
+            if m_tokens_len[k]+1 < max_motion_length:
+                target = torch.cat([target, 
+                                    torch.ones((1, 1, 5), dtype=int, device=target.device) * mot_end_idx, 
+                                    torch.ones((1, max_motion_length-1-m_tokens_len[k].int().item(), 5), dtype=int, device=target.device) * mot_pad_idx], axis=1)
+            else:
+                target = torch.cat([target, 
+                                    torch.ones((1, 1, 5), dtype=int, device=target.device) * mot_end_idx], axis=1)
+            target_gt.append(target)
+        target_gt = torch.cat(target_gt, axis=0)
+        pred_gt = target_gt[...,pred_idx].clone()
+        #erro should mask rest part
+        ### lower mask ###
+        if target_mask is not None:
+            target_mask = torch.cat([target_mask, torch.zeros(bs, 1, dtype=int)], dim=1).bool()
+            target_masked = target_gt.clone()
+            target_masked[target_mask] = mask_id
+            select_end = target_gt == mot_end_idx
+            target_masked[select_end] = target_gt[select_end]
+        else:
+            target_masked = target_gt
+        ##################
+
+        pred_len = m_length.cuda()
+        pred_tok_len = m_tokens_len
+        target_masked[...,pred_idx] = pred_gt 
+        pred_pose_eval = torch.zeros((bs, seq, pose.shape[-1])).cuda()
+
+        # __upper_text__ = ['A man punches with right hand.'] * 32
+        text = clip.tokenize(upper_text, truncate=True).cuda()
+        feat_clip_text, word_emb_clip = clip_model(text)
+        #?
+        # index_motion = trans_encoder(feat_clip_text, idx_lower=target_lower_masked, word_emb=word_emb_clip, type="sample", m_length=pred_len, rand_pos=True, CFG=-1)
+        index_motion = self.maskdecoder(feat_clip_text,target_masked,word_emb_clip,pred_idx,type="sample", m_length=pred_len, rand_pos=False)
+        for i in range(bs):
+            all_tokens = target_gt[i:i+1,:int(pred_tok_len[i].item())].clone()
+            all_tokens[..., pred_idx] = index_motion[i:i+1, :int(pred_tok_len[i].item())]
             pred_pose = self.vqvae(all_tokens, type='decode')
             pred_pose_eval[i:i+1, :int(pred_len[i].item())] = pred_pose
 

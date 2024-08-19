@@ -1,6 +1,6 @@
 import torch.nn as nn
 from models.encdec import Encoder, Decoder
-from models.quantize_cnn import QuantizeEMAReset, Quantizer, QuantizeEMA, QuantizeReset
+from models.quantize_cnn import QuantizeEMAReset, Quantizer, QuantizeEMA_Frozen, QuantizeReset
 from models.t2m_trans import Decoder_Transformer, Encoder_Transformer
 from exit.utils import generate_src_mask
 import torch
@@ -9,8 +9,8 @@ import numpy as np
 class VQVAE_MULTI_V2(nn.Module):
     def __init__(self,
                  args,
-                 nb_code=512,
-                 code_dim=512,
+                 nb_code=256,
+                 code_dim=32,
                  output_emb_width=512,
                  down_t=3,
                  stride_t=2,
@@ -63,6 +63,11 @@ class VQVAE_MULTI_V2(nn.Module):
         self.quantizer_right_leg = QuantizeEMAReset(nb_code, int(code_dim/5), args)
         self.quantizer_left_leg = QuantizeEMAReset(nb_code, int(code_dim/5), args)
         self.quantizer_spine = QuantizeEMAReset(nb_code, int(code_dim/5), args)
+        # self.quantizer_left_arm = QuantizeEMA_Frozen(nb_code, int(code_dim/5), args)
+        # self.quantizer_right_arm = QuantizeEMA_Frozen(nb_code, int(code_dim/5), args)
+        # self.quantizer_right_leg = QuantizeEMA_Frozen(nb_code, int(code_dim/5), args)
+        # self.quantizer_left_leg = QuantizeEMA_Frozen(nb_code, int(code_dim/5), args)
+        # self.quantizer_spine = QuantizeEMA_Frozen(nb_code, int(code_dim/5), args)
 
         self.upper_map = []
         self.lower_map = []
@@ -132,7 +137,7 @@ class VQVAE_MULTI_V2(nn.Module):
     
     def merge_upper_lower(self,left_arm_emb, right_arm_emb, right_leg_emb, left_leg_emb, spine_emb):
         motion = torch.empty(*left_arm_emb.shape[:2], 263).to(left_arm_emb.device)
-        motion[..., HML_LEFT_ARM_MASK]=left_arm_emb
+        motion[..., HML_LEFT_ARM_MASK] = left_arm_emb
         motion[..., HML_RIGHT_ARM_MASK] = right_arm_emb
         motion[..., HML_RIGHT_LEG_MASK] = right_leg_emb
         motion[..., HML_LEFT_LEG_MASK] = left_leg_emb

@@ -306,8 +306,136 @@ class QuantizeReset(nn.Module):
         x_d = x_d.view(N, T, -1).permute(0, 2, 1).contiguous()   #(N, DIM, T)
         
         return x_d, commit_loss, perplexity
+class QuantizeEMA_Frozen(nn.Module):
+    def __init__(self, nb_code, code_dim, args):
+        super().__init__()
+        self.nb_code = nb_code
+        self.code_dim = code_dim
+        self.mu = 0.99
+        self.num_codebooks = 5  # Number of codebooks
+        self.reset_codebooks()
+        self.freeze_codebooks = False  # New attribute to control freezing
 
+    def reset_codebooks(self):
+        self.init = False
+        self.code_sum = None
+        self.code_count = None
+        self.codebooks = nn.ParameterList([
+            nn.Parameter(torch.zeros(self.nb_code, self.code_dim).cuda()) for _ in range(self.num_codebooks)
+        ])
+        self.codebooks.requires_grad = False
+
+    def load_codebooks(self, codebooks):
+        """
+        Load multiple existing codebooks and freeze them.
+        :param codebooks: List of pre-trained codebooks (should be a list of torch.Tensor objects)
+        """
+        for i, codebook in enumerate(codebooks):
+            self.codebooks[i].data = codebook
+        self.freeze_codebooks = True  # Freeze the codebooks
+        self.init = True  # Consider the codebooks as initialized
+
+    def _tile(self, x):
+        nb_code_x, code_dim = x.shape
+        if nb_code_x < self.nb_code:
+            n_repeats = (self.nb_code + nb_code_x - 1) // nb_code_x
+            std = 0.01 / np.sqrt(code_dim)
+            out = x.repeat(n_repeats, 1)
+            out = out + torch.randn_like(out) * std
+        else:
+            out = x
+        return out
+
+    def init_codebooks(self, x):
+        out = self._tile(x)
+        for i in range(self.num_codebooks):
+            self.codebooks[i].data = out[:self.nb_code]
+        self.code_sum = [codebook.clone() for codebook in self.codebooks]
+        self.code_count = [torch.ones(self.nb_code, device=codebook.device) for codebook in self.codebooks]
+        self.init = True
+        
+    @torch.no_grad()
+    def compute_perplexity(self, code_idx):
+        code_onehot = torch.zeros(self.nb_code, code_idx.shape[0], device=code_idx.device)  # nb_code, N * L
+        code_onehot.scatter_(0, code_idx.view(1, code_idx.shape[0]), 1)
+        code_count = code_onehot.sum(dim=-1)  # nb_code
+        prob = code_count / torch.sum(code_count)
+        perplexity = torch.exp(-torch.sum(prob * torch.log(prob + 1e-7)))
+        return perplexity
     
+    @torch.no_grad()
+    def update_codebooks(self, x, code_idx_list):
+        if self.freeze_codebooks:
+            return None  # Skip updating if codebooks are frozen
+
+        for i in range(self.num_codebooks):
+            code_idx = code_idx_list[i]
+            code_onehot = torch.zeros(self.nb_code, x.shape[0], device=x.device)  # nb_code, N * L
+            code_onehot.scatter_(0, code_idx.view(1, x.shape[0]), 1)
+            code_sum = torch.matmul(code_onehot, x)  # nb_code, w
+            code_count = code_onehot.sum(dim=-1)  # nb_code
+
+            self.code_sum[i] = self.mu * self.code_sum[i] + (1. - self.mu) * code_sum  # w, nb_code
+            self.code_count[i] = self.mu * self.code_count[i] + (1. - self.mu) * code_count  # nb_code
+
+            code_update = self.code_sum[i].view(self.nb_code, self.code_dim) / self.code_count[i].view(self.nb_code, 1)
+            self.codebooks[i].data = code_update
+
+    def preprocess(self, x):
+        x = x.permute(0, 2, 1).contiguous()
+        x = x.view(-1, x.shape[-1])  
+        return x
+
+    def quantize(self, x):
+        code_idx_list = []
+        for i in range(self.num_codebooks):
+            k_w = self.codebooks[i].t()
+            distance = torch.sum(x ** 2, dim=-1, keepdim=True) - 2 * torch.matmul(x, k_w) + torch.sum(k_w ** 2, dim=0, keepdim=True)  # (N * L, b)
+            _, code_idx = torch.min(distance, dim=-1)
+            code_idx_list.append(code_idx)
+        return code_idx_list
+
+    def dequantize(self, code_idx_list):
+        x_d_list = []
+        for i in range(self.num_codebooks):
+            x_d = F.embedding(code_idx_list[i], self.codebooks[i])
+            x_d_list.append(x_d)
+        return x_d_list
+
+    def forward(self, x, gt_idx=None):
+        N, width, T = x.shape
+        x = self.preprocess(x)
+
+        if self.training and not self.init and not self.freeze_codebooks:
+            self.init_codebooks(x)
+
+        code_idx_list = self.quantize(x)
+        #TODO 
+        x_d_list = self.dequantize(code_idx_list)
+
+        if self.training and not self.freeze_codebooks:
+            self.update_codebooks(x, code_idx_list)
+            perplexity = [self.compute_perplexity(code_idx) for code_idx in code_idx_list]
+        else:
+            perplexity = [self.compute_perplexity(code_idx) for code_idx in code_idx_list]
+
+        commit_loss = sum([F.mse_loss(x, x_d.detach()) for x_d in x_d_list]) / self.num_codebooks
+        x_d = sum(x_d_list) / self.num_codebooks
+        x_d = x + (x_d - x).detach()
+
+        if gt_idx is not None:
+            classification_loss = 0
+            for i in range(self.num_codebooks):
+                classification_loss += F.cross_entropy(code_idx_list[i].unsqueeze(0), gt_idx[i].unsqueeze(0).long())
+            classification_loss /= self.num_codebooks
+        else:
+            classification_loss = 0
+        x_d = x_d.view(N, T, -1).permute(0, 2, 1).contiguous()  # (N, DIM, T)
+        
+        return x_d, commit_loss, classification_loss,perplexity
+
+
+ 
 class QuantizeEMA(nn.Module):
     def __init__(self, nb_code, code_dim, args):
         super().__init__()
@@ -421,3 +549,4 @@ class QuantizeEMA(nn.Module):
         x_d = x_d.view(N, T, -1).permute(0, 2, 1).contiguous()   #(N, DIM, T)
         
         return x_d, commit_loss, perplexity
+    

@@ -53,7 +53,7 @@ def evaluation_vqvae(out_dir, val_loader, net, logger, writer, nb_iter, best_fid
             # pose_xyz = recover_from_ric(torch.from_numpy(pose).float().cuda(), num_joints)
 
 
-            pred_pose, loss_commit, perplexity = net(motion[i:i+1, :m_length[i]])
+            pred_pose,*_ = net(motion[i:i+1, :m_length[i]])
             # pred_denorm = val_loader.dataset.inv_transform(pred_pose.detach().cpu().numpy())
             # pred_xyz = recover_from_ric(torch.from_numpy(pred_denorm).float().cuda(), num_joints)
             

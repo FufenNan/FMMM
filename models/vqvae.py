@@ -1,6 +1,6 @@
 import torch.nn as nn
 from models.encdec import Encoder, Decoder
-from models.quantize_cnn import QuantizeEMAReset, Quantizer, QuantizeEMA, QuantizeReset
+from models.quantize_cnn import QuantizeEMAReset, Quantizer, QuantizeEMA_Frozen, QuantizeReset
 from models.t2m_trans import Decoder_Transformer, Encoder_Transformer
 from exit.utils import generate_src_mask
 
@@ -54,7 +54,7 @@ class VQVAE_251(nn.Module):
         elif args.quantizer == "orig":
             self.quantizer = Quantizer(nb_code, code_dim, 1.0)
         elif args.quantizer == "ema":
-            self.quantizer = QuantizeEMA(nb_code, code_dim, args)
+            self.quantizer = QuantizeEMA_Frozen(nb_code, code_dim, args)
         elif args.quantizer == "reset":
             self.quantizer = QuantizeReset(nb_code, code_dim, args)
 

@@ -225,6 +225,8 @@ class Text2Motion_Transformer(nn.Module):
             return self.sample(*args, **kwargs)
         elif type=='inpaint':
             return self.inpaint(*args, **kwargs)
+        elif type=='generate':
+            return self.generate(*args, **kwargs)
         else:
             raise ValueError(f'Unknown "{type}" type')
         
@@ -255,7 +257,99 @@ class Text2Motion_Transformer(nn.Module):
         logits = self.trans_head(feat, src_mask)
 
         return logits
+    def generate(self, clip_feature, word_emb, m_length=None, if_test=False, rand_pos=True, CFG=-1, token_cond=None, max_steps = 10):
+        max_length = 49
+        batch_size = clip_feature.shape[0]
+        mask_id = self.num_vq + 2
+        pad_id = self.num_vq + 1
+        end_id = self.num_vq
+        shape = (batch_size, self.block_size - 1,5)
+        topk_filter_thres = .9
+        starting_temperature = 1.0
+        scores = torch.ones(shape, dtype = torch.float32, device = clip_feature.device)
+        
+        m_tokens_len = torch.ceil((m_length)/4).long()
+        src_token_mask = generate_src_mask(self.block_size-1, m_tokens_len+1)
+        src_token_mask_noend = generate_src_mask(self.block_size-1, m_tokens_len)
+        if token_cond is not None:
+            ids = token_cond.clone()
+            ids[~src_token_mask_noend] = pad_id
+            num_token_cond = (ids==mask_id).sum(-1)
+        else:
+            ids = torch.full(shape, mask_id, dtype = torch.long, device = clip_feature.device)
+        
+        # [TODO] confirm that these 2 lines are not neccessary (repeated below and maybe don't need them at all)
+        ids[~src_token_mask] = pad_id # [INFO] replace with pad id
+        ids=ids.permute(0,2,1)
+        ids.scatter_(-1, m_tokens_len[..., None, None].long().repeat(1,5,1), end_id) # [INFO] replace with end id
+        ids=ids.permute(0,2,1)
 
+        sample_max_steps = torch.round(max_steps/max_length*m_tokens_len) + 1e-8
+        for step in range(max_steps):
+            timestep = torch.clip(step/(sample_max_steps), max=1)
+            if len(m_tokens_len)==1 and step > 0 and torch.clip(step-1/(sample_max_steps), max=1).cpu().item() == timestep:
+                break
+            rand_mask_prob = cosine_schedule(timestep) # timestep #
+            num_token_masked = (rand_mask_prob * m_tokens_len).long().clip(min=1)
+
+            if token_cond is not None:
+                num_token_masked = (rand_mask_prob * num_token_cond).long().clip(min=1)
+                scores[token_cond!=mask_id] = 0
+            
+            # [INFO] rm no motion frames
+            scores[~src_token_mask_noend] = 0
+            scores= scores.permute(0,2,1)
+            scores = scores/scores.sum(-1)[:, :,None] # normalize only unmasked token
+            
+            # if rand_pos:
+            #     sorted_score_indices = scores.multinomial(scores.shape[-1], replacement=False) # stocastic
+            # else:
+            sorted, sorted_score_indices = scores.sort(descending=True,dim=-1) # deterministic
+            
+            ids[~src_token_mask] = pad_id # [INFO] replace with pad id
+            ids=ids.permute(0,2,1)
+            ids.scatter_(-1, m_tokens_len[..., None,None].long().repeat(1,5,1), end_id) # [INFO] replace with end id
+            ## [INFO] Replace "mask_id" to "ids" that have highest "num_token_masked" "scores" 
+            select_masked_indices = generate_src_mask(sorted_score_indices.shape[-1], num_token_masked).unsqueeze(1).repeat(1,5,1)
+            # [INFO] repeat last_id to make it scatter_ the existing last ids.
+            last_index = sorted_score_indices.gather(-1, (num_token_masked-1)[...,None,None].repeat(1,5,1))
+            sorted_score_indices = sorted_score_indices * select_masked_indices + (last_index*~select_masked_indices)
+            ids.scatter_(-1, sorted_score_indices, mask_id)
+            ids=ids.permute(0,2,1)
+            scores= scores.permute(0,2,1)
+
+            logits = self.forward(ids, clip_feature, src_token_mask, word_emb=word_emb)[:,1:]
+            filtered_logits = logits #top_p(logits, .5) # #top_k(logits, topk_filter_thres)
+            if rand_pos:
+                temperature = 1 #starting_temperature * (steps_until_x0 / timesteps) # temperature is annealed
+            else:
+                temperature = 0 #starting_temperature * (steps_until_x0 / timesteps) # temperature is annealed
+
+            # [INFO] if temperature==0: is equal to argmax (filtered_logits.argmax(dim = -1))
+            # pred_ids = filtered_logits.argmax(dim = -1)
+            pred=[]
+            is_masks=[]
+            for i in range(5):
+                pred_ids = gumbel_sample(filtered_logits[:,:,i,:].squeeze(2), temperature = temperature, dim = -1)
+                is_mask = ids[...,i] == mask_id
+                is_masks.append(is_mask)
+                pred.append(pred_ids)
+                ids[...,i] = torch.where(
+                            is_mask,
+                            pred_ids,
+                            ids[...,i]
+                        )
+            pred=torch.stack(pred,dim=2)
+            is_masks=torch.stack(is_masks,dim=2)
+            # if timestep == 1.:
+            #     print(probs_without_temperature.shape)
+            probs_without_temperature = logits.softmax(dim = -1)
+            scores = 1 - probs_without_temperature.gather(-1, pred[..., None])
+            scores = rearrange(scores, '... 1 -> ...')
+            scores = scores.masked_fill(~is_masks, 0)
+        if if_test:
+            return ids
+        return ids
     def sample(self, clip_feature, idx, word_emb, target, m_length=None, if_test=False, rand_pos=False, CFG=-1):
         max_steps = 20
         max_length = 49
