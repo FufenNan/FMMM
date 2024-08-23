@@ -58,6 +58,7 @@ def get_args_parser():
     parser.add_argument('--out-dir', type=str, default='output', help='output directory')
     parser.add_argument('--exp-name', type=str, default='exp_debug', help='name of the experiment, will create a file inside out-dir')
     parser.add_argument('--vq-name', type=str, default='VQVAE', help='name of the generated dataset .npy, will create a file inside out-dir')
+    parser.add_argument('--teacher-pth', type=str, help='path to teacher vqvae')
     ## other
     parser.add_argument('--print-iter', default=200, type=int, help='print frequency')
     parser.add_argument('--eval-iter', default=10000, type=int, help='evaluation frequency')
@@ -68,5 +69,6 @@ def get_args_parser():
     ## generator
     parser.add_argument('--text', type=str, help='text')
     parser.add_argument('--length', type=int, help='length')
+
 
     return parser.parse_args()

@@ -21,6 +21,25 @@
             ]
         },
         {
+            "name": "train_vq_general",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "cwd": "/home/haoyum3/MMM",
+            "args": [
+                "--dataname", "t2m",
+                "--exp-name", "vq5_general",
+                "--sep-multi",
+                "--lr","2e-4",
+                "--warm-up-iter","0",
+                "--code-dim","32",
+                "--nb-code","256",
+                "--codebook-name","multi_vq_256_32_5_reset",
+                "--teacher-pth", "/home/haoyum3/MMM/output/vq/2024-08-16-23-15-13_multi_vq_256_32_5/net_last.pth",
+            ]
+        },
+        {
             "name": "train_vq",
             "type": "debugpy",
             "request": "launch",
@@ -81,25 +100,6 @@
             ]
         },
         {
-            "name": "train_vq_general",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${file}",
-            "console": "integratedTerminal",
-            "cwd": "/home/haoyum3/MMM",
-            "args": [
-                "--dataname", "t2m",
-                "--exp-name", "vq5_general",
-                "--sep-multi",
-                "--lr","2e-4",
-                "--warm-up-iter","0",
-                "--code-dim","32",
-                "--nb-code","256",
-                "--codebook-name","multi_vq_256_32_5_reset",
-                "--teacher-pth", "/home/haoyum3/MMM/output/vq/2024-08-16-23-15-13_multi_vq_256_32_5/net_last.pth",
-            ]
-        },
-        {
             "name": "train_trans",
             "type": "debugpy",
             "request": "launch",
@@ -107,7 +107,7 @@
             "console": "integratedTerminal",
             "cwd": "/home/haoyum3/MMM",
             "args": [
-                "--vq-name", "vq_name",
+                "--vq-name", "2024-06-03-20-22-07_retrain",
                 "--out-dir", "output/t2m",
                 "--exp-name", "trans_name",
                 "--num-local-layer", "2",
@@ -144,6 +144,36 @@
                 "--embed-dim-gpt","1280",
                 "--batch-size","512" 
             ]
+        },
+        {
+            "name": "train_trans_times",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "cwd": "/home/haoyum3/MMM",
+            "args": [
+                "--vq-name", "2024-08-19-00-17-48_vq_general_decoder",
+                "--out-dir", "output/t2m",
+                "--exp-name", "trans_times",
+                "--num-local-layer", "2",
+                "--lr","0.0001",
+                "--nb-code","256",
+                "--code-dim","32",
+                "--embed-dim-gpt","512",
+                "--batch-size","128",
+                "--teacher-pth", "/home/haoyum3/MMM/output/vq/2024-08-16-23-15-13_multi_vq_256_32_5/net_last.pth",
+                "--resume-pth", "/home/haoyum3/MMM/output/vq/2024-08-19-00-17-48_vq_general_decoder/net_last.pth",
+            ]
+        },
+        {
+            "name": "timefomer",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "cwd": "/home/haoyum3/MMM",
+            "justMyCode": false
         }
     ]
 }

@@ -45,8 +45,8 @@ class VQMotionDataset(data.Dataset):
 
         mean = np.load(pjoin(self.meta_dir, 'mean.npy'))
         std = np.load(pjoin(self.meta_dir, 'std.npy'))
-        
-        split_file = pjoin(self.data_root, 'train.txt')
+        split_file = pjoin(self.data_root, 'val.txt')#test train_val val
+        #split_file = pjoin(self.data_root, 'train.txt')
         
         data_dict = {}
         id_list = []

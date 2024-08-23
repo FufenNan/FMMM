@@ -51,7 +51,7 @@ class Text2MotionDataset(data.Dataset):
             kinematic_chain = paramUtil.kit_kinematic_chain
 
         split_file = pjoin(self.data_root, 'train.txt')
-
+        # split_file = pjoin(self.data_root, 'test.txt')
 
         id_list = []
         with cs.open(split_file, 'r') as f:
@@ -60,6 +60,9 @@ class Text2MotionDataset(data.Dataset):
 
         new_name_list = []
         data_dict = {}
+        # for quicker test
+        # from itertools import islice
+        # for name in tqdm(islice(id_list, 1000)):
         for name in tqdm(id_list):
             try:
                 m_token_list = np.load(pjoin(tokenizer_name, '%s.npy'%name))
