@@ -9,7 +9,7 @@ import json
 import clip
 import options.option_transformer as option_trans
 from models.vqvae_multi import VQVAE_MULTI_V2
-from models.vqvae_general import HumanVQVAE_GENERAL,VQVAE_decode_only
+from models.vqvae_general import VQVAE_decode_only
 import utils.utils_model as utils_model
 import utils.eval_trans as eval_trans
 from dataset import dataset_TM_train
@@ -96,11 +96,6 @@ teacher_net= VQVAE_MULTI_V2(args, ## use args to define different parameters in 
                         {'mean': torch.from_numpy(val_loader.dataset.mean).cuda().float(), 
                         'std': torch.from_numpy(val_loader.dataset.std).cuda().float()},
                         True)
-    # logger.info('loading checkpoint from {}'.format(args.teacher_pth))
-    # teacher_ckpt=torch.load(args.teacher_pth, map_location='cpu')
-    # teacher_net.load_state_dict(teacher_ckpt['net'], strict=True)
-    # teacher_net.cuda()
-    # teacher_net.eval()
 net= VQVAE_decode_only(args, ## use args to define different parameters in different quantizers
                         teacher_net,
                         args.nb_code,#8192
@@ -147,7 +142,7 @@ if args.resume_trans is not None:
     trans_encoder.load_state_dict(ckpt['trans'], strict=True)
 trans_encoder.train()
 trans_encoder.cuda()
-#trans_encoder = torch.nn.DataParallel(trans_encoder)
+trans_encoder = torch.nn.DataParallel(trans_encoder)
 
 ##### ---- Optimizer & Scheduler ---- #####
 optimizer = utils_model.initial_optim(args.decay_option, args.lr, args.weight_decay, trans_encoder, args.optimizer)
@@ -182,7 +177,7 @@ best_top1=0
 best_top2=0 
 best_top3=0 
 best_matching=100 
-# pred_pose_eval, pose, m_length, clip_text, best_fid, best_iter, best_div, best_top1, best_top2, best_top3, best_matching, best_multi, writer, logger = eval_trans.evaluation_transformer(args.out_dir, val_loader, net, trans_encoder, logger, writer, 0, best_fid=1000, best_iter=0, best_div=100, best_top1=0, best_top2=0, best_top3=0, best_matching=100, clip_model=clip_model, eval_wrapper=eval_wrapper)
+# pred_pose_eval, pose, m_length, clip_text, best_fid, best_iter, best_div, best_top1, best_top2, best_top3, best_matching, best_multi, writer, logger = eval_trans.evaluation_time_transformer(args.out_dir, val_loader, net, trans_encoder, logger, writer, 0, best_fid=1000, best_iter=0, best_div=100, best_top1=0, best_top2=0, best_top3=0, best_matching=100, clip_model=clip_model, eval_wrapper=eval_wrapper)
 
 def get_acc(cls_pred, target, mask):
     cls_pred = torch.masked_select(cls_pred, mask.unsqueeze(-1)).view(-1, cls_pred.shape[-1])
@@ -257,10 +252,10 @@ for nb_iter in tqdm(range(1, args.total_iter + 1), position=0, leave=True):
     loss_cls = (loss_cls * weight_seq_masked).sum()
 
     ## global loss
-    optimizer.zero_grad()
-    loss_cls.backward()
-    optimizer.step()
-    scheduler.step()
+    # optimizer.zero_grad()
+    # loss_cls.backward()
+    # optimizer.step()
+    # scheduler.step()
 
     if nb_iter % args.print_iter ==  0 :
         probs_seq_masked = torch.softmax(cls_pred_seq_masked, dim=-1)
@@ -286,7 +281,7 @@ for nb_iter in tqdm(range(1, args.total_iter + 1), position=0, leave=True):
             num_repeat = -30
             rand_pos = True
             val_loader = dataset_TM_eval.DATALoader(args.dataname, True, 32, w_vectorizer)
-        pred_pose_eval, pose, m_length, clip_text, best_fid, best_iter, best_div, best_top1, best_top2, best_top3, best_matching, best_multi, writer, logger = eval_trans.evaluation_transformer(args.out_dir, val_loader, net, trans_encoder, logger, writer, nb_iter, best_fid, best_iter, best_div, best_top1, best_top2, best_top3, best_matching, clip_model=clip_model, eval_wrapper=eval_wrapper, dataname=args.dataname, num_repeat=num_repeat, rand_pos=rand_pos)
+        pred_pose_eval, pose, m_length, clip_text, best_fid, best_iter, best_div, best_top1, best_top2, best_top3, best_matching, best_multi, writer, logger = eval_trans.evaluation_time_transformer(args.out_dir, val_loader, net, trans_encoder, logger, writer, nb_iter, best_fid, best_iter, best_div, best_top1, best_top2, best_top3, best_matching, clip_model=clip_model, eval_wrapper=eval_wrapper, dataname=args.dataname, num_repeat=num_repeat, rand_pos=rand_pos)
         # for i in range(4):
         #     x = pose[i].detach().cpu().numpy()
         #     y = pred_pose_eval[i].detach().cpu().numpy()

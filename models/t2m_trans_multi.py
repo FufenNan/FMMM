@@ -371,25 +371,6 @@ class Text2Motion_Transformer(nn.Module):
         idx_target[~src_token_mask] = pad_id # [INFO] replace with pad id
         #[bs,50]
         idx_target.scatter_(-1, m_tokens_len[..., None].long(), end_id) # [INFO] replace with end id
-
-        ### PlayGround ####
-        # score high = mask
-        # m_tokens_len = torch.ceil((m_length)/4)
-        # src_token_mask = generate_src_mask(self.block_size-1, m_tokens_len+1)
-
-        # # mock
-        # timestep = torch.tensor(.5)
-        # rand_mask_prob = cosine_schedule(timestep)
-        # scores = torch.arange(self.block_size - 1).repeat(batch_size, 1).cuda()
-        # scores[1] = torch.flip(torch.arange(self.block_size - 1), dims=(0,))
-
-        # # iteration
-        # num_token_masked = (rand_mask_prob * m_tokens_len).int().clip(min=1)
-        # scores[~src_token_mask] = -1e5
-        # masked_indices = scores.argsort(dim=-1, descending=True) # This is flipped the order. The highest score is the first in order.
-        # masked_indices = masked_indices < num_token_masked.unsqueeze(-1) # So it can filter out by "< num_token_masked". We want to filter the high score as a mask
-        # ids[masked_indices] = mask_id
-        #########################
         temp = []
         sample_max_steps = torch.round(max_steps/max_length*m_tokens_len) + 1e-8
         for step in range(max_steps):

@@ -115,13 +115,19 @@ class VQVAE_decode_only(nn.Module):
         x = x.permute(0,2,1)
         return x
 
-    def forward(self, x):
-        x_emb = self.teacher_net(x,type='token_emb')
-        ## quantization
-        ## decoder
-        x_decoder = self.decoder(x_emb)
-        x_out = self.postprocess(x_decoder)
-        return x_out
+    def forward(self, x,type='full'):
+        if type == 'full':
+            x_emb = self.teacher_net(x,type='motion_emb')
+            x_decoder = self.decoder(x_emb)
+            x_out = self.postprocess(x_decoder)
+            return x_out
+        elif type == 'decode':
+            x_emb = self.teacher_net(x,type='token_emb')
+            x_decoder = self.decoder(x_emb)
+            x_out = self.postprocess(x_decoder)
+            return x_out
+
+
 
 
     def forward_decoder(self, x):
