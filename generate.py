@@ -164,6 +164,29 @@ class MMM(torch.nn.Module):
             pred_pose = self.vqvae(index_motion[k:k+1, :m_token_length[k]], type='decode')
             pred_pose_all[k:k+1, :int(lengths[k].item())] = pred_pose
         return pred_pose_all
+    def forward_inter(self, text, lengths=-1,edit_idx=None,weight=.5,rand_pos=True):
+        b = len(text)//2
+        feat_clip_text1 = clip.tokenize(text[0], truncate=True).cuda()
+        #feat_clip_text[b,512],word_emb[b,77,512]
+        feat_clip_text1, word_emb = clip_model(feat_clip_text1)
+        feat_clip_text2 = clip.tokenize(text[1], truncate=True).cuda()
+        #feat_clip_text[b,512],word_emb[b,77,512]
+        feat_clip_text2, word_emb = clip_model(feat_clip_text2)
+        feat_clip_text_inter = torch.lerp(feat_clip_text1, feat_clip_text2, weight)
+        if self.is_time:
+            feat_clip_text = feat_clip_text1.unsqueeze(1).repeat(1, 5, 1)
+            for i in edit_idx:
+                feat_clip_text[:,i,:] = feat_clip_text_inter
+
+        #[b,50]
+        index_motion = self.maskdecoder(feat_clip_text, word_emb, type="sample", m_length=lengths, rand_pos=rand_pos, if_test=False)
+
+        m_token_length = torch.ceil((lengths)/4).int()
+        pred_pose_all = torch.zeros((b, 196, 263)).cuda()
+        for k in range(b):
+            pred_pose = self.vqvae(index_motion[k:k+1, :m_token_length[k]], type='decode')
+            pred_pose_all[k:k+1, :int(lengths[k].item())] = pred_pose
+        return pred_pose_all
     def multi_generate(self, m_length, texts=None,rand_pos=True):# bs, nb_joints, joints_dim, seq_len
         m_tokens_len = torch.ceil((m_length)/4)
         pred_len = m_length.cuda()
@@ -175,7 +198,7 @@ class MMM(torch.nn.Module):
             feat_clip_text, word_emb_clip = clip_model(text)
             feat_clip_texts.append(feat_clip_text)
         feat_clip_texts = torch.stack(feat_clip_texts,dim=1)
-        index_motion = self.maskdecoder(feat_clip_texts,word_emb_clip, pred_len,rand_pos=rand_pos,type="sample")
+        index_motion = self.maskdecoder(feat_clip_texts,word_emb_clip,type="sample",m_length=pred_len,rand_pos=rand_pos,if_test=False)
         all_tokens = index_motion[0, :int(pred_tok_len[0].item())].unsqueeze(0)
         pred_pose = self.vqvae.vqvae.teacher_net(all_tokens, type='decode')
         pred_pose_eval[0, :int(pred_len[0].item())] = pred_pose

@@ -272,11 +272,6 @@ class Text2Motion_Transformer(nn.Module):
             last_index = sorted_score_indices.gather(-1, num_token_masked.unsqueeze(-1)-1)
             sorted_score_indices = sorted_score_indices * select_masked_indices + (last_index*~select_masked_indices)
             ids.scatter_(-1, sorted_score_indices, mask_id)
-            l=[]
-            for i,idx in enumerate(ids[0]):
-                if idx!=8194:
-                    l.append(i)
-            print(l)
             logits = self.forward(ids, clip_feature, src_token_mask, word_emb=word_emb)[:,1:]
             filtered_logits = logits #top_p(logits, .5) # #top_k(logits, topk_filter_thres)
             if rand_pos:

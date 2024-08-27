@@ -301,6 +301,7 @@ class VQVAE_MULTI_V2(nn.Module):
                 x_decoder = self.decoder(x_d)
                 x_out = self.postprocess(x_decoder)
                 return x_out
+            
         elif type=='motion_emb':
             N, T, _ = x.shape
             # TODO shift upper down in decoder?
@@ -353,6 +354,7 @@ class VQVAE_MULTI_V2(nn.Module):
 
             x_emb= torch.cat([left_arm_emb, right_arm_emb, left_leg_emb,right_leg_emb,spine_emb], dim=-1)
             return x_emb.permute(0,2,1).contiguous()
+        
         elif type=='token_emb':
             left_arm_emb = self.quantizer_left_arm.dequantize(x[..., 0])
             right_arm_emb = self.quantizer_right_arm.dequantize(x[..., 1])
@@ -362,6 +364,15 @@ class VQVAE_MULTI_V2(nn.Module):
 
             x_emb= torch.cat([left_arm_emb, right_arm_emb, left_leg_emb,right_leg_emb,spine_emb], dim=-1)
             return x_emb.permute(0,2,1).contiguous()
+        elif type=='emb_token':
+            N, T, _ ,_ = x.shape
+            left_arm_code_idx = self.quantizer_left_arm.quantize(x[..., 0])
+            right_arm_code_idx = self.quantizer_right_arm.quantize(x[..., 1])
+            left_leg_code_idx = self.quantizer_left_leg.quantize(x[..., 2])
+            right_leg_code_idx = self.quantizer_right_leg.quantize(x[..., 3])
+            spine_code_idx = self.quantizer_spine.quantize(x[..., 4])
+            return torch.cat([left_arm_code_idx.unsqueeze(-1), right_arm_code_idx.unsqueeze(-1), left_leg_code_idx.unsqueeze(-1), \
+                                  right_leg_code_idx.unsqueeze(-1),spine_code_idx.unsqueeze(-1)], dim=-1)
 
     def preprocess(self, x):
         # (bs, T, Jx3) -> (bs, Jx3, T)

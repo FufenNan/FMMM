@@ -244,7 +244,6 @@ for nb_iter in tqdm(range(1, args.total_iter + 1), position=0, leave=True):
     cls_pred = cls_pred.squeeze(2)
     # [INFO] Compute xent loss as a batch
     weights = seq_mask_no_end / (seq_mask_no_end.sum(-1).unsqueeze(-1) * seq_mask_no_end.shape[0])
-    #TODO 改写attention head,输出confidence
     cls_pred_seq_masked = cls_pred[seq_mask_no_end, :].view(-1, cls_pred.shape[-1])
     target_seq_masked = target[seq_mask_no_end]
     weight_seq_masked = weights[seq_mask_no_end]
