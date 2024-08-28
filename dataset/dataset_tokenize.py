@@ -45,8 +45,7 @@ class VQMotionDataset(data.Dataset):
 
         mean = np.load(pjoin(self.meta_dir, 'mean.npy'))
         std = np.load(pjoin(self.meta_dir, 'std.npy'))
-        split_file = pjoin(self.data_root, 'val.txt')#test train_val val
-        #split_file = pjoin(self.data_root, 'train.txt')
+        split_file = pjoin(self.data_root, 'train.txt')
         
         data_dict = {}
         id_list = []
@@ -56,7 +55,9 @@ class VQMotionDataset(data.Dataset):
 
         new_name_list = []
         length_list = []
-        for name in tqdm(id_list):
+        from itertools import islice
+        for name in tqdm(islice(id_list, 1000)):
+        #for name in tqdm(id_list):
             try:
                 motion = np.load(pjoin(self.motion_dir, name + '.npy'))
                 if (len(motion)) < min_motion_len or (len(motion) >= 200):

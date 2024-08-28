@@ -234,14 +234,15 @@ class Text2Motion_Transformer(nn.Module):
                 num_local_layer=0, 
                 n_head=8, 
                 drop_out_rate=0.1, 
-                fc_rate=4):
+                fc_rate=4,
+                cfg=False):
         super().__init__()
         self.n_head = n_head
-        self.trans_base = CrossCondTransBase(vqvae, num_vq, embed_dim, clip_dim, block_size, num_layers, num_local_layer, n_head, drop_out_rate, fc_rate)
-        self.trans_head = CrossCondTransHead(num_vq, embed_dim, block_size, num_layers, n_head, drop_out_rate, fc_rate)
+        self.trans_base = CrossCondTransBase(vqvae, num_vq, embed_dim, clip_dim, block_size, num_layers, num_local_layer, n_head, drop_out_rate, fc_rate,cfg)
+        self.trans_head = CrossCondTransHead(num_vq, embed_dim, block_size, num_layers, n_head, drop_out_rate, fc_rate,cfg)
         self.block_size = block_size
         self.num_vq = num_vq
-
+        self.cfg = cfg
         # self.skip_trans = Skip_Connection_Transformer(num_vq, embed_dim, clip_dim, block_size, num_layers, n_head, drop_out_rate, fc_rate)
 
     def get_block_size(self):
@@ -266,10 +267,10 @@ class Text2Motion_Transformer(nn.Module):
         src_mask = src_mask.view(B, 1, 1, T).repeat(1, self.n_head, T, 1)
         return src_mask
 
-    def forward_function(self, idxs, clip_feature, src_mask=None, att_txt=None, word_emb=None):
+    def forward_function(self, idxs, clip_feature, src_mask=None, att_txt=None, word_emb=None,speed=0.):
         if src_mask is not None:
             src_mask = self.get_attn_mask(src_mask, att_txt)
-        feat = self.trans_base(idxs, clip_feature, src_mask, word_emb)#[bs,51,1,5,d]
+        feat = self.trans_base(idxs, clip_feature, src_mask, word_emb,speed)#[bs,51,1,5,d]
         logits = self.trans_head(feat, src_mask)
 
         return logits
@@ -407,98 +408,6 @@ class Text2Motion_Transformer(nn.Module):
             return ids.permute(0,2,1)
         return ids.permute(0,2,1)
     
-    # def inpaint(self, first_tokens, last_tokens, clip_feature=None, word_emb=None, inpaint_len=2, rand_pos=False):
-    #     # support only one sample
-    #     assert first_tokens.shape[0] == 1
-    #     assert last_tokens.shape[0] == 1
-    #     max_steps = 20
-    #     max_length = 49
-    #     batch_size = first_tokens.shape[0]
-    #     mask_id = self.num_vq + 2
-    #     pad_id = self.num_vq + 1
-    #     end_id = self.num_vq
-    #     shape = (batch_size, self.block_size - 1)
-    #     scores = torch.ones(shape, dtype = torch.float32, device = first_tokens.device)
-        
-    #     # force add first / last tokens
-    #     first_partition_pos_idx = first_tokens.shape[1]
-    #     second_partition_pos_idx = first_partition_pos_idx + inpaint_len
-    #     end_pos_idx = second_partition_pos_idx + last_tokens.shape[1]
-
-    #     m_tokens_len = torch.ones(batch_size, device = first_tokens.device)*end_pos_idx
-
-    #     src_token_mask = generate_src_mask(self.block_size-1, m_tokens_len+1)
-    #     src_token_mask_noend = generate_src_mask(self.block_size-1, m_tokens_len)
-    #     ids = torch.full(shape, mask_id, dtype = torch.long, device = first_tokens.device)
-        
-    #     ids[:, :first_partition_pos_idx] = first_tokens
-    #     ids[:, second_partition_pos_idx:end_pos_idx] = last_tokens
-    #     src_token_mask_noend[:, :first_partition_pos_idx] = False
-    #     src_token_mask_noend[:, second_partition_pos_idx:end_pos_idx] = False
-        
-    #     # [TODO] confirm that these 2 lines are not neccessary (repeated below and maybe don't need them at all)
-    #     ids[~src_token_mask] = pad_id # [INFO] replace with pad id
-    #     ids.scatter_(-1, m_tokens_len[..., None].long(), end_id) # [INFO] replace with end id
-
-    #     temp = []
-    #     sample_max_steps = torch.round(max_steps/max_length*m_tokens_len) + 1e-8
-
-    #     if clip_feature is None:
-    #         clip_feature = torch.zeros(1, 512).to(first_tokens.device)
-    #         att_txt = torch.zeros((batch_size,1), dtype=torch.bool, device = first_tokens.device)
-    #     else:
-    #         att_txt = torch.ones((batch_size,1), dtype=torch.bool, device = first_tokens.device)
-
-    #     for step in range(max_steps):
-    #         timestep = torch.clip(step/(sample_max_steps), max=1)
-    #         rand_mask_prob = cosine_schedule(timestep) # timestep #
-    #         num_token_masked = (rand_mask_prob * m_tokens_len).long().clip(min=1)
-    #         # [INFO] rm no motion frames
-    #         scores[~src_token_mask_noend] = 0
-    #         # [INFO] rm begin and end frames
-    #         scores[:, :first_partition_pos_idx] = 0
-    #         scores[:, second_partition_pos_idx:end_pos_idx] = 0
-    #         scores = scores/scores.sum(-1)[:, None] # normalize only unmasked token
-            
-    #         sorted, sorted_score_indices = scores.sort(descending=True) # deterministic
-            
-    #         ids[~src_token_mask] = pad_id # [INFO] replace with pad id
-    #         ids.scatter_(-1, m_tokens_len[..., None].long(), end_id) # [INFO] replace with end id
-    #         ## [INFO] Replace "mask_id" to "ids" that have highest "num_token_masked" "scores" 
-    #         select_masked_indices = generate_src_mask(sorted_score_indices.shape[1], num_token_masked)
-    #         # [INFO] repeat last_id to make it scatter_ the existing last ids.
-    #         last_index = sorted_score_indices.gather(-1, num_token_masked.unsqueeze(-1)-1)
-    #         sorted_score_indices = sorted_score_indices * select_masked_indices + (last_index*~select_masked_indices)
-    #         ids.scatter_(-1, sorted_score_indices, mask_id)
-
-    #         # [TODO] force replace begin/end tokens b/c the num mask will be more than actual inpainting frames
-    #         ids[:, :first_partition_pos_idx] = first_tokens
-    #         ids[:, second_partition_pos_idx:end_pos_idx] = last_tokens
-            
-    #         logits = self.forward(ids, clip_feature, src_token_mask, word_emb=word_emb)[:,1:]
-    #         filtered_logits = logits #top_k(logits, topk_filter_thres)
-    #         if rand_pos:
-    #             temperature = 1 #starting_temperature * (steps_until_x0 / timesteps) # temperature is annealed
-    #         else:
-    #             temperature = 0 #starting_temperature * (steps_until_x0 / timesteps) # temperature is annealed
-
-    #         # [INFO] if temperature==0: is equal to argmax (filtered_logits.argmax(dim = -1))
-    #         # pred_ids = filtered_logits.argmax(dim = -1)
-    #         pred_ids = gumbel_sample(filtered_logits, temperature = temperature, dim = -1)
-    #         is_mask = ids == mask_id
-    #         temp.append(is_mask[:1])
-            
-    #         ids = torch.where(
-    #                     is_mask,
-    #                     pred_ids,
-    #                     ids
-    #                 )
-            
-    #         probs_without_temperature = logits.softmax(dim = -1)
-    #         scores = 1 - probs_without_temperature.gather(-1, pred_ids[..., None])
-    #         scores = rearrange(scores, '... 1 -> ...')
-    #         scores = scores.masked_fill(~is_mask, 0)
-    #     return ids
 
 class Time_Block(nn.Module):
     def __init__(self, embed_dim=512, block_size=16, n_head=8, drop_out_rate=0.1, fc_rate=4):
@@ -578,7 +487,28 @@ class Block_crossatt(nn.Module):
         x = x + self.attn(self.ln1(x), self.ln3(word_emb))
         x = x + self.mlp(self.ln2(x))
         return x
+#TODO    
+class InterGroupCNN(nn.Module):
+    def __init__(self):
+        super(InterGroupCNN, self).__init__()
+        # 处理组内特征的线性层或1x1卷积
+        self.group_feature_extractor = nn.Linear(2, 16)  # 将每个2维组映射到16维
+        # 用于组间关系的卷积层
+        self.inter_group_conv = nn.Conv1d(in_channels=16, out_channels=64, kernel_size=2, stride=1)  # 1x2卷积
+        # 最终映射到512维的线性层
+        self.fc = nn.Linear(64 * 3, 512)
 
+    def forward(self, x):
+        x = x.view(-1, 4, 2)  # 重塑输入为 (batch_size, groups, group_size)
+        x = self.group_feature_extractor(x)  # 对每个组内的2维进行特征提取
+        x = nn.ReLU()(x)
+        x = x.permute(0, 2, 1)  # 转换为 (batch_size, group_feature_dim, num_groups)
+        x = self.inter_group_conv(x)  # 对组间关系进行卷积操作
+        print(x.shape)
+        x = nn.ReLU()(x)
+        x = x.view(x.size(0), -1)  # 展平为 (batch_size, 64*3)
+        x = self.fc(x)  # 最终映射到512维度
+        return x
 class CrossCondTransBase(nn.Module):
 
     def __init__(self, 
@@ -591,15 +521,23 @@ class CrossCondTransBase(nn.Module):
                 num_local_layer = 1,
                 n_head=8, 
                 drop_out_rate=0.1, 
-                fc_rate=4):
+                fc_rate=4,
+                cfg=False):
         super().__init__()
         self.vqvae = vqvae
         # self.tok_emb = nn.Embedding(num_vq + 3, embed_dim).requires_grad_(False) 
         self.learn_tok_emb = nn.Embedding(3, int(self.vqvae.vqvae.code_dim))# [INFO] 3 = [end_id, blank_id, mask_id]
         self.to_emb = nn.Linear(self.vqvae.vqvae.code_dim, embed_dim)
-
+        self.cfg = cfg
         self.cond_emb = nn.Linear(clip_dim, embed_dim)
         self.pos_embedding = nn.Embedding(block_size, embed_dim)
+        #TODO 
+        if self.cfg:
+            self.speed_embedding = nn.Sequential(
+                    nn.Linear(2, 16),  
+                    nn.Conv1d(in_channels=16, out_channels=64, kernel_size=2, stride=1),  
+                    nn.Linear(64 * 3, 512)
+            )
         self.drop = nn.Dropout(drop_out_rate)
         # transformer block
         self.blocks = nn.Sequential(*[Time_Block(embed_dim, block_size, n_head, drop_out_rate, fc_rate) for _ in range(num_layers-num_local_layer)])
@@ -625,8 +563,7 @@ class CrossCondTransBase(nn.Module):
             module.bias.data.zero_()
             module.weight.data.fill_(1.0)
     
-    def forward(self,idx, clip_feature, src_mask, word_emb):
-        #TODO
+    def forward(self,idx, clip_feature, src_mask, word_emb,speed=0.):
         if len(idx) == 0:
             token_embeddings = self.cond_emb(clip_feature).unsqueeze(1)
         else:
@@ -675,7 +612,8 @@ class CrossCondTransHead(nn.Module):
                 num_layers=2, 
                 n_head=8, 
                 drop_out_rate=0.1, 
-                fc_rate=4):
+                fc_rate=4,
+                cfg=False):
         super().__init__()
 
         self.blocks = nn.Sequential(*[Time_Block(embed_dim, block_size, n_head, drop_out_rate, fc_rate) for _ in range(num_layers)])

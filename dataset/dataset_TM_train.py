@@ -17,14 +17,14 @@ def collate_fn(batch):
 
 '''For use of training text-2-motion generative model'''
 class Text2MotionDataset(data.Dataset):
-    def __init__(self, dataset_name, feat_bias = 5, unit_length = 4, codebook_size = 1024, tokenizer_name=None, up_low_sep=False,multi_sep=False):
+    def __init__(self, dataset_name, feat_bias = 5, unit_length = 4, codebook_size = 1024, tokenizer_name=None, up_low_sep=False,multi_sep=False,cfg = False):
         
         self.max_length = 64
         self.pointer = 0
         self.dataset_name = dataset_name
         self.up_low_sep = up_low_sep
         self.multi_sep = multi_sep
-
+        self.cfg = cfg
         self.unit_length = unit_length
         # self.mot_start_idx = codebook_size
         self.mot_end_idx = codebook_size
@@ -60,13 +60,20 @@ class Text2MotionDataset(data.Dataset):
 
         new_name_list = []
         data_dict = {}
+        if cfg:
+            new_name_list_wo_speed = []
+            data_dict_wo_speed = {}
+            new_name_list_speed = []
+            data_dict_speed = {}
         # for quicker test
         from itertools import islice
         for name in tqdm(islice(id_list, 1000)):
         # for name in tqdm(id_list):
             try:
                 m_token_list = np.load(pjoin(tokenizer_name, '%s.npy'%name))
-
+                if cfg:
+                    m_token_wo_speed_list = np.load(pjoin(tokenizer_name, '%s_wo_speed.npy'%name))
+                    speed_list = np.load(pjoin(tokenizer_name, '%s_speed.npy'%name))
                 # Read text
                 with cs.open(pjoin(self.text_dir, name + '.txt')) as f:
                     text_data = []
@@ -92,14 +99,25 @@ class Text2MotionDataset(data.Dataset):
                             else:
                                 # [INFO] Check with KIT, doesn't come here that mean f_tag & to_tag are 0.0 (tag for caption from-to frames)
                                 m_token_list_new = [tokens[int(f_tag*fps/unit_length) : int(to_tag*fps/unit_length)] for tokens in m_token_list if int(f_tag*fps/unit_length) < int(to_tag*fps/unit_length)]
-
                                 if len(m_token_list_new) == 0:
                                     continue
                                 new_name = '%s_%f_%f'%(name, f_tag, to_tag)
-
                                 data_dict[new_name] = {'m_token_list': m_token_list_new,
-                                                       'text':[text_dict]}
+                                                        'text':[text_dict]}
                                 new_name_list.append(new_name)
+
+                                if cfg:
+                                    m_token_wo_speed_list_new = [tokens[int(f_tag*fps/unit_length) : int(to_tag*fps/unit_length)] for tokens in m_token_wo_speed_list if int(f_tag*fps/unit_length) < int(to_tag*fps/unit_length)]
+                                    if len(m_token_list_new) == 0:
+                                        continue
+                                    new_name_wo_speed = '%s_wo_speed_%f_%f'%(name, f_tag, to_tag)
+                                    data_dict_wo_speed[new_name_wo_speed] = {'m_token_list': m_token_wo_speed_list_new}
+                                    new_name_list_wo_speed.append(new_name_wo_speed)
+                                    speed_list_new = [speed[int(f_tag*fps/unit_length) : int(to_tag*fps/unit_length)] for speed in speed_list if int(f_tag*fps/unit_length) < int(to_tag*fps/unit_length)]
+                                    new_name_speed = '%s_speed_%f_%f'%(name, f_tag, to_tag)
+                                    data_dict_speed[new_name_speed] = {'m_token_list': speed_list_new}
+                                    new_name_list_speed.append(new_name_speed)
+
                         except:
                             pass
 
@@ -107,10 +125,20 @@ class Text2MotionDataset(data.Dataset):
                     data_dict[name] = {'m_token_list': m_token_list,
                                        'text':text_data}
                     new_name_list.append(name)
+                    if cfg:
+                        data_dict_wo_speed[name] = {'m_token_list': m_token_wo_speed_list}
+                        new_name_list_wo_speed.append(name)
+                        data_dict_speed[name] = {'m_token_list': speed_list}
+                        new_name_list_speed.append(name)
             except:
                 pass
         self.data_dict = data_dict
         self.name_list = new_name_list
+        if cfg: 
+            self.data_dict_wo_speed = data_dict_wo_speed
+            self.name_list_wo_speed = new_name_list_wo_speed
+            self.data_dict_speed = data_dict_speed
+            self.name_list_speed = new_name_list_speed
 
     def __len__(self):
         return len(self.data_dict)
@@ -119,6 +147,13 @@ class Text2MotionDataset(data.Dataset):
         data = self.data_dict[self.name_list[item]]
         m_token_list, text_list = data['m_token_list'], data['text']
         m_tokens = random.choice(m_token_list)
+        if self.cfg:
+            data_wo_speed = self.data_dict_wo_speed[self.name_list_wo_speed[item]]
+            m_token_list_wo_speed = data_wo_speed['m_token_list']
+            m_tokens_wo_speed = random.choice(m_token_list_wo_speed)
+            data_speed = self.data_dict_speed[self.name_list_speed[item]]
+            m_token_list_speed = data_speed['m_token_list']
+            m_tokens_speed = random.choice(m_token_list_speed)
 
         text_data = random.choice(text_list)
         caption= text_data['caption']
@@ -143,6 +178,17 @@ class Text2MotionDataset(data.Dataset):
                 m_tokens = np.concatenate([m_tokens, np.ones((1, 5), dtype=int) * self.mot_end_idx, np.ones((self.max_motion_length-1-m_tokens_len, 5), dtype=int) * self.mot_pad_idx], axis=0)
             else:
                 m_tokens = np.concatenate([m_tokens, np.ones((1, 5), dtype=int) * self.mot_end_idx], axis=0)
+            if self.cfg:
+                m_tokens_wo_speed = np.tile(m_tokens_wo_speed, (len_mult, 1))[:new_len]
+                m_tokens_wo_speed_len = new_len
+                m_tokens_speed = np.tile(m_tokens_speed, (len_mult, 1, 1))[:new_len]
+                m_tokens_speed_len = new_len
+                if m_tokens_wo_speed_len+1 < self.max_motion_length:
+                    m_tokens_wo_speed = np.concatenate([m_tokens_wo_speed, np.ones((1, 5), dtype=int) * self.mot_end_idx, np.ones((self.max_motion_length-1-m_tokens_wo_speed_len, 5), dtype=int) * self.mot_pad_idx], axis=0)
+                    m_tokens_speed = np.concatenate([m_tokens_speed, np.zeros((self.max_motion_length-m_tokens_speed_len, 4, 2), dtype=int)], axis=0)
+                else:
+                    m_tokens_wo_speed = np.concatenate([m_tokens_wo_speed, np.ones((1, 5), dtype=int) * self.mot_end_idx], axis=0)
+                    m_tokens_speed = np.concatenate([m_tokens_speed, np.zeros((1, 4, 2), dtype=int)], axis=0)
         elif self.up_low_sep:
             new_len = random.randint(20, self.max_motion_length-1)
             len_mult = math.ceil(new_len/m_tokens_len)
@@ -157,21 +203,25 @@ class Text2MotionDataset(data.Dataset):
                 m_tokens = np.concatenate([m_tokens, np.ones((1), dtype=int) * self.mot_end_idx, np.ones((self.max_motion_length-1-m_tokens_len), dtype=int) * self.mot_pad_idx], axis=0)
             else:
                 m_tokens = np.concatenate([m_tokens, np.ones((1), dtype=int) * self.mot_end_idx], axis=0)
-        return caption, m_tokens, m_tokens_len
+        if self.cfg:
+            return caption, m_tokens,m_tokens_wo_speed,m_tokens_speed,m_tokens_len
+        else:
+            return caption, m_tokens, m_tokens_len
 
 
 
 
 def DATALoader(dataset_name,
                 batch_size, codebook_size, tokenizer_name, unit_length=4,
-                num_workers = 8, up_low_sep=False,multi_sep=False): 
+                num_workers = 8, up_low_sep=False,multi_sep=False,cfg=False): 
 
-    train_loader = torch.utils.data.DataLoader(Text2MotionDataset(dataset_name, codebook_size = codebook_size, tokenizer_name = tokenizer_name, unit_length=unit_length, up_low_sep=up_low_sep,multi_sep=multi_sep),
+    train_loader = torch.utils.data.DataLoader(Text2MotionDataset(dataset_name, codebook_size = codebook_size, tokenizer_name = tokenizer_name, unit_length=unit_length, up_low_sep=up_low_sep,multi_sep=multi_sep,cfg=cfg),
                                               batch_size,
                                               shuffle=True,
                                               num_workers=num_workers,
                                               #collate_fn=collate_fn,
-                                              drop_last = True)
+                                              drop_last = True,
+                                              )
     
 
     return train_loader

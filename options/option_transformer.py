@@ -6,7 +6,6 @@ def get_args_parser():
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     
     ## dataloader
-    
     parser.add_argument('--dataname', type=str, default='t2m', help='dataset directory')
     parser.add_argument('--batch-size', default=128, type=int, help='batch size')
     parser.add_argument('--fps', default=[20], nargs="+", type=int, help='frames per second')
@@ -44,6 +43,8 @@ def get_args_parser():
     parser.add_argument("--n-head-gpt", type=int, default=16, help="nb of heads")
     parser.add_argument("--ff-rate", type=int, default=4, help="feedforward size")
     parser.add_argument("--drop-out-rate", type=float, default=0.1, help="dropout ratio in the pos encoding")
+    parser.add_argument("--cfg", action='store_true', help="whether use classifier-free guidance ")
+    parser.add_argument("--w", type=float, default=1.0, help="classifier-free guidance scale")
     
     ## quantizer
     parser.add_argument("--quantizer", type=str, default='ema_reset', choices = ['ema', 'orig', 'ema_reset', 'reset'], help="eps for optimal transport")
@@ -52,13 +53,13 @@ def get_args_parser():
     ## resume
     parser.add_argument("--resume-pth", type=str, default=None, help='resume vq pth')
     parser.add_argument("--resume-trans", type=str, default=None, help='resume gpt pth')
-    
+    parser.add_argument('--teacher-pth', type=str, help='path to teacher vqvae')
     
     ## output directory 
     parser.add_argument('--out-dir', type=str, default='output', help='output directory')
     parser.add_argument('--exp-name', type=str, default='exp_debug', help='name of the experiment, will create a file inside out-dir')
     parser.add_argument('--vq-name', type=str, default='VQVAE', help='name of the generated dataset .npy, will create a file inside out-dir')
-    parser.add_argument('--teacher-pth', type=str, help='path to teacher vqvae')
+
     ## other
     parser.add_argument('--print-iter', default=200, type=int, help='print frequency')
     parser.add_argument('--eval-iter', default=10000, type=int, help='evaluation frequency')

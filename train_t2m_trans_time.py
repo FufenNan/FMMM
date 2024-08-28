@@ -36,7 +36,10 @@ init_save_folder(args)
 
 # [TODO] make the 'output/' folder as arg
 args.vq_dir = f'./output/vq/{args.vq_name}' #os.path.join("./dataset/KIT-ML" if args.dataname == 'kit' else "./dataset/HumanML3D", f'{args.vq_name}')
-codebook_dir = f'{args.vq_dir}/codebook/'
+if args.cfg:
+    codebook_dir = f'{args.vq_dir}/codebook_cfg/'
+else:
+    codebook_dir = f'{args.vq_dir}/codebook/'
 # args.resume_pth = f'{args.vq_dir}/net_last.pth'
 os.makedirs(args.vq_dir, exist_ok = True)
 os.makedirs(codebook_dir, exist_ok = True)
@@ -155,17 +158,26 @@ loss_ce = torch.nn.CrossEntropyLoss(reduction='none')
 ##### ---- Dataloader ---- #####
 if len(os.listdir(codebook_dir)) == 0:
     train_loader_token = dataset_tokenize.DATALoader(args.dataname, 1, unit_length=2**args.down_t)
-    for batch in tqdm(train_loader_token,position=0, leave=True):
+    from itertools import islice
+    for batch in tqdm(islice(train_loader_token, 1000),position=0, leave=True):
+    #for batch in tqdm(train_loader_token,position=0, leave=True):
         pose, name = batch
         bs, seq = pose.shape[0], pose.shape[1]
 
         pose = pose.cuda().float() # bs, nb_joints, joints_dim, seq_len
+        if args.cfg:
+            pose_wo_speed = pose.clone()
+            pose_wo_speed[:, :, 1:3] = 0.
+            target_wo_speed = net.vqvae.teacher_net(pose_wo_speed, type='encode')
+            target_wo_speed = target_wo_speed.cpu().numpy()
+            np.save(pjoin(codebook_dir, name[0] +'_wo_speed.npy'), target_wo_speed)
+            np.save(pjoin(codebook_dir, name[0] +'_speed.npy'), pose[:, :, 1:3].reshape(bs,-1,4,2).cpu().numpy())
         target = net.vqvae.teacher_net(pose, type='encode')
         target = target.cpu().numpy()
         np.save(pjoin(codebook_dir, name[0] +'.npy'), target)
 
 
-train_loader = dataset_TM_train.DATALoader(args.dataname, args.batch_size, args.nb_code, codebook_dir, unit_length=2**args.down_t,multi_sep=True)
+train_loader = dataset_TM_train.DATALoader(args.dataname, args.batch_size, args.nb_code, codebook_dir, unit_length=2**args.down_t,multi_sep=True,cfg=args.cfg)
 train_loader_iter = dataset_TM_train.cycle(train_loader)
 
         
@@ -190,9 +202,15 @@ def get_acc(cls_pred, target, mask):
 # while nb_iter <= args.total_iter:
 for nb_iter in tqdm(range(1, args.total_iter + 1), position=0, leave=True):
     batch = next(train_loader_iter)
-    #TODO receive multiple texts
-    clip_text, m_tokens, m_tokens_len = batch
-    m_tokens, m_tokens_len = m_tokens.cuda(), m_tokens_len.cuda()
+    if args.cfg:
+        clip_text, m_tokens, m_tokens_wo_speed, m_tokens_speed, m_tokens_len = batch
+        m_tokens_wo_speed = m_tokens_wo_speed.cuda()
+        target_wo_speed = m_tokens_wo_speed
+        m_tokens_speed = m_tokens_speed.cuda()
+        target_speed = m_tokens_speed
+    else:
+        clip_text, m_tokens, m_tokens_len = batch
+        m_tokens, m_tokens_len = m_tokens.cuda(), m_tokens_len.cuda()
     bs = m_tokens.shape[0]
     target = m_tokens    # (bs, 26)
     target = target.cuda()
@@ -222,7 +240,6 @@ for nb_iter in tqdm(range(1, args.total_iter + 1), position=0, leave=True):
     mask = torch.logical_or(mask, ~seq_mask_no_end).int()
     r_indices = torch.randint_like(target, args.nb_code)
     input_indices = mask*target+(1-mask)*r_indices
-
     # Time step masking
     mask_id = get_model(net).vqvae.num_code + 2
     # rand_time = uniform((batch_size,), device = target.device)
@@ -234,13 +251,16 @@ for nb_iter in tqdm(range(1, args.total_iter + 1), position=0, leave=True):
     batch_randperm = batch_randperm.argsort(dim=-1)
     mask_token = batch_randperm < rearrange(num_token_masked, 'b -> b 1')
     mask_token = mask_token.unsqueeze(-1).repeat(1,1,5)
-
     # masked_target = torch.where(mask_token, input=input_indices, other=-1)
     masked_input_indices = torch.where(mask_token, mask_id, input_indices)
-
+    if args.cfg:
+        input_indices_wo_speed = mask*target_wo_speed+(1-mask)*r_indices
+        masked_input_indices_wo_speed = torch.where(mask_token, mask_id, input_indices_wo_speed)
     seq_mask = generate_src_mask(max_len, m_tokens_len+1)
     att_txt = None # CFG: torch.rand((seq_mask.shape[0], 1)) > 0.1
     cls_pred = trans_encoder(masked_input_indices, feat_clip_text, src_mask = seq_mask, att_txt=att_txt, word_emb=word_emb)[:, 1:]
+    if args.cfg:
+        cls_pred_wo_speed = trans_encoder(masked_input_indices_wo_speed, feat_clip_text, src_mask = seq_mask, att_txt=att_txt, word_emb=word_emb)[:, 1:]
     cls_pred = cls_pred.squeeze(2)
     # [INFO] Compute xent loss as a batch
     weights = seq_mask_no_end / (seq_mask_no_end.sum(-1).unsqueeze(-1) * seq_mask_no_end.shape[0])
