@@ -45,8 +45,7 @@ class VQMotionDataset(data.Dataset):
 
         mean = np.load(pjoin(self.meta_dir, 'mean.npy'))
         std = np.load(pjoin(self.meta_dir, 'std.npy'))
-        split_file = pjoin(self.data_root, 'val.txt')#test train_val val
-        #split_file = pjoin(self.data_root, 'train.txt')
+        split_file = pjoin(self.data_root, 'train.txt')
         
         data_dict = {}
         id_list = []
@@ -56,6 +55,8 @@ class VQMotionDataset(data.Dataset):
 
         new_name_list = []
         length_list = []
+        # from itertools import islice
+        # for name in tqdm(islice(id_list, 1000),position=0, leave=True):
         for name in tqdm(id_list):
             try:
                 motion = np.load(pjoin(self.motion_dir, name + '.npy'))

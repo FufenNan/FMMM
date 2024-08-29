@@ -167,13 +167,25 @@
             ]
         },
         {
-            "name": "timefomer",
+            "name": "tune_trans_times",
             "type": "debugpy",
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal",
             "cwd": "/home/haoyum3/MMM",
-            "justMyCode": false
+            "args": [
+                "--vq-name", "2024-08-19-00-17-48_vq_general_decoder",
+                "--out-dir", "output/t2m",
+                "--exp-name", "tune_test",
+                "--num-local-layer", "2",
+                "--lr","0.0001",
+                "--nb-code","256",
+                "--code-dim","32",
+                "--embed-dim-gpt","512",
+                "--batch-size","4",
+                "--teacher-pth", "/home/haoyum3/MMM/output/vq/2024-08-16-23-15-13_multi_vq_256_32_5/net_last.pth",
+                "--resume-pth", "/home/haoyum3/MMM/output/vq/2024-08-19-00-17-48_vq_general_decoder/net_last.pth",
+            ]
         }
     ]
 }
