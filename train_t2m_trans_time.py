@@ -137,7 +137,8 @@ trans_encoder = trans.Text2Motion_Transformer(vqvae=net,
                                 num_local_layer=args.num_local_layer, 
                                 n_head=args.n_head_gpt, 
                                 drop_out_rate=args.drop_out_rate, 
-                                fc_rate=args.ff_rate)
+                                fc_rate=args.ff_rate,
+                                cfg=args.cfg)
 
 if args.resume_trans is not None:
     print ('loading transformer checkpoint from {}'.format(args.resume_trans))
@@ -189,6 +190,7 @@ best_top1=0
 best_top2=0 
 best_top3=0 
 best_matching=100 
+#TODO
 # pred_pose_eval, pose, m_length, clip_text, best_fid, best_iter, best_div, best_top1, best_top2, best_top3, best_matching, best_multi, writer, logger = eval_trans.evaluation_time_transformer(args.out_dir, val_loader, net, trans_encoder, logger, writer, 0, best_fid=1000, best_iter=0, best_div=100, best_top1=0, best_top2=0, best_top3=0, best_matching=100, clip_model=clip_model, eval_wrapper=eval_wrapper)
 
 def get_acc(cls_pred, target, mask):
@@ -204,10 +206,8 @@ for nb_iter in tqdm(range(1, args.total_iter + 1), position=0, leave=True):
     batch = next(train_loader_iter)
     if args.cfg:
         clip_text, m_tokens, m_tokens_wo_speed, m_tokens_speed, m_tokens_len = batch
-        m_tokens_wo_speed = m_tokens_wo_speed.cuda()
-        target_wo_speed = m_tokens_wo_speed
-        m_tokens_speed = m_tokens_speed.cuda()
-        target_speed = m_tokens_speed
+        m_tokens_wo_speed, m_tokens_speed, m_tokens, m_tokens_len = m_tokens_wo_speed.cuda(), m_tokens_speed.cuda().to(torch.float32), m_tokens.cuda(), m_tokens_len.cuda()
+        target_wo_speed, target_speed = m_tokens_wo_speed, m_tokens_speed
     else:
         clip_text, m_tokens, m_tokens_len = batch
         m_tokens, m_tokens_len = m_tokens.cuda(), m_tokens_len.cuda()
@@ -257,10 +257,11 @@ for nb_iter in tqdm(range(1, args.total_iter + 1), position=0, leave=True):
         input_indices_wo_speed = mask*target_wo_speed+(1-mask)*r_indices
         masked_input_indices_wo_speed = torch.where(mask_token, mask_id, input_indices_wo_speed)
     seq_mask = generate_src_mask(max_len, m_tokens_len+1)
-    att_txt = None # CFG: torch.rand((seq_mask.shape[0], 1)) > 0.1
-    cls_pred = trans_encoder(masked_input_indices, feat_clip_text, src_mask = seq_mask, att_txt=att_txt, word_emb=word_emb)[:, 1:]
+    att_txt = None
     if args.cfg:
-        cls_pred_wo_speed = trans_encoder(masked_input_indices_wo_speed, feat_clip_text, src_mask = seq_mask, att_txt=att_txt, word_emb=word_emb)[:, 1:]
+        cls_pred = trans_encoder(masked_input_indices, feat_clip_text, src_mask = seq_mask, att_txt=att_txt, word_emb=word_emb,idxs_wo_speed=masked_input_indices_wo_speed,speed = m_tokens_speed,w=args.w)[:, 1:]
+    else:
+        cls_pred = trans_encoder(masked_input_indices, feat_clip_text, src_mask = seq_mask, att_txt=att_txt, word_emb=word_emb)[:, 1:]
     cls_pred = cls_pred.squeeze(2)
     # [INFO] Compute xent loss as a batch
     weights = seq_mask_no_end / (seq_mask_no_end.sum(-1).unsqueeze(-1) * seq_mask_no_end.shape[0])

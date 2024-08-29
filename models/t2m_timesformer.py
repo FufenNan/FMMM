@@ -153,7 +153,8 @@ class TimeSformer(nn.Module):
         attn_dropout = 0.1,
         ff_dropout = 0.1,
         rotary_emb = True,
-        shift_tokens = False
+        shift_tokens = False,
+        cfg = False
     ):
         super().__init__()
         assert image_height % patch_height == 0, 'Image height must be divisible by the patch height.'
@@ -168,14 +169,16 @@ class TimeSformer(nn.Module):
         self.patch_width = patch_width
         self.to_patch_embedding = nn.Linear(patch_dim, dim)
         self.cls_token = nn.Parameter(torch.randn(1, dim))
-
         self.use_rotary_emb = rotary_emb
+        self.cfg = cfg
         if rotary_emb:
             self.frame_rot_emb = RotaryEmbedding(dim_head)
             self.image_rot_emb = AxialRotaryEmbedding(dim_head)
         else:
             self.pos_emb = nn.Embedding(num_positions + 1, dim)
-
+        if self.cfg:
+            self.speed_emb = nn.Linear(8,dim_head)
+            self.fuse_emb = nn.Linear(dim_head*2,dim_head)
         self.layers = nn.ModuleList([])
         for _ in range(depth):
             ff = FeedForward(dim, dropout = ff_dropout)
@@ -189,8 +192,7 @@ class TimeSformer(nn.Module):
 
             self.layers.append(nn.ModuleList([time_attn, spatial_attn, ff]))
 
-
-    def forward(self, video, mask = None):
+    def forward(self, video, mask = None, speed=None,cfg = False):
             b, f, _, h, w, *_, device, ph, pw = *video.shape, video.device, self.patch_height, self.patch_width
             assert h % ph == 0 and w % pw == 0, f'height {h} and width {w} of video must be divisible by the patch height {ph} and patch width {pw}'
             # calculate num patches in height and width dimension, and number of total patches (n)
@@ -198,25 +200,22 @@ class TimeSformer(nn.Module):
             n = hp * wp
             # video to patch embeddings
             x = rearrange(video, 'b f c (hp ph) (wp pw) -> b (f hp wp) (ph pw c)', ph=ph, pw=pw)
-            # tokens = self.to_patch_embedding(video)
-            # add cls token TODO add text token
             # positional embedding
             frame_pos_emb = None
             image_pos_emb = None
             if not self.use_rotary_emb:
+                #Not used
                 x += self.pos_emb(torch.arange(x.shape[1], device = device))
             else:
                 frame_pos_emb = self.frame_rot_emb(f, device = device)
-                # TODO delete
                 image_pos_emb = self.image_rot_emb(hp, wp, device = device)
-            # calculate masking for uneven number of frames
-            frame_mask = None
-            # if exists(mask):
-            #     mask_with_cls = F.pad(mask, (1, 0), value = True)
-            #     frame_mask = repeat(mask_with_cls, 'b f -> (b h n) () f', n = n, h = self.heads)
-            # time and space attention
+                speed_emb = self.speed_emb(speed)
+                frame_pos_emb = self.fuse_emb(torch.cat([frame_pos_emb,speed_emb],dim=-1))
+                if cfg:
+                    for emb in frame_pos_emb:
+                        emb[:,1:,:] += speed_emb
             for (time_attn, spatial_attn, ff) in self.layers:
-                x = time_attn(x, 'b (f n) d', '(b n) f d', n = n, mask = frame_mask, rot_emb = frame_pos_emb) + x
+                x = time_attn(x, 'b (f n) d', '(b n) f d', n = n, rot_emb = frame_pos_emb) + x
                 x = spatial_attn(x, 'b (f n) d', '(b f) n d', f = f, rot_emb = image_pos_emb) + x
                 x = ff(x) + x
             return x
@@ -238,12 +237,12 @@ class Text2Motion_Transformer(nn.Module):
                 cfg=False):
         super().__init__()
         self.n_head = n_head
-        self.trans_base = CrossCondTransBase(vqvae, num_vq, embed_dim, clip_dim, block_size, num_layers, num_local_layer, n_head, drop_out_rate, fc_rate,cfg)
-        self.trans_head = CrossCondTransHead(num_vq, embed_dim, block_size, num_layers, n_head, drop_out_rate, fc_rate,cfg)
+        self.trans_base = CrossCondTransBase(vqvae, num_vq, embed_dim, clip_dim, block_size, num_layers, num_local_layer, n_head, drop_out_rate,cfg)
+        self.trans_head = CrossCondTransHead(num_vq, embed_dim, block_size, num_layers, n_head, drop_out_rate, cfg)
         self.block_size = block_size
         self.num_vq = num_vq
         self.cfg = cfg
-        # self.skip_trans = Skip_Connection_Transformer(num_vq, embed_dim, clip_dim, block_size, num_layers, n_head, drop_out_rate, fc_rate)
+        
 
     def get_block_size(self):
         return self.block_size
@@ -267,14 +266,18 @@ class Text2Motion_Transformer(nn.Module):
         src_mask = src_mask.view(B, 1, 1, T).repeat(1, self.n_head, T, 1)
         return src_mask
 
-    def forward_function(self, idxs, clip_feature, src_mask=None, att_txt=None, word_emb=None,speed=0.):
+    def forward_function(self, idxs, clip_feature, src_mask=None, att_txt=None, word_emb=None,speed=None,idxs_wo_speed=None,w=1.0):
         if src_mask is not None:
             src_mask = self.get_attn_mask(src_mask, att_txt)
-        feat = self.trans_base(idxs, clip_feature, src_mask, word_emb,speed)#[bs,51,1,5,d]
-        logits = self.trans_head(feat, src_mask)
-
+        if self.cfg:
+            feat,uncond_feat = self.trans_base(idxs, clip_feature, src_mask, word_emb, speed, idxs_wo_speed)#[bs,51,1,5,d]
+            logits = self.trans_head(feat, src_mask, uncond_feat, w)
+        else:
+            feat = self.trans_base(idxs, clip_feature, src_mask, word_emb)#[bs,51,1,5,d]
+            logits = self.trans_head(feat, src_mask)
         return logits
-
+    
+    #TODO add cfg
     def sample(self, clip_feature, word_emb, m_length=None, if_test=False, rand_pos=True, CFG=-1, token_cond=None, max_steps=10):
         max_length = 49
         batch_size = clip_feature.shape[0]
@@ -410,7 +413,7 @@ class Text2Motion_Transformer(nn.Module):
     
 
 class Time_Block(nn.Module):
-    def __init__(self, embed_dim=512, block_size=16, n_head=8, drop_out_rate=0.1, fc_rate=4):
+    def __init__(self, embed_dim=512, block_size=16, n_head=8, drop_out_rate=0.1, cfg = False):
         super().__init__()
         self.ln1 = nn.LayerNorm(embed_dim)
         self.attn = TimeSformer(
@@ -424,11 +427,16 @@ class Time_Block(nn.Module):
             heads=n_head,
             dim_head=embed_dim//n_head,
             ff_dropout=drop_out_rate,
-            attn_dropout=drop_out_rate)
+            attn_dropout=drop_out_rate,
+            cfg=cfg)
 
-    def forward(self, x, src_mask=None):
-        output = self.attn(self.ln1(x), src_mask)
-        x = x + output.reshape(x.shape)
+    def forward(self, x, src_mask=None, speed = None, cfg = False):
+        if cfg:
+            output = self.attn(self.ln1(x), src_mask, speed, cfg)
+            x = x + output.reshape(x.shape)
+        else:
+            output = self.attn(self.ln1(x), src_mask)
+            x = x + output.reshape(x.shape)
         return x
     
 class CrossAttention(nn.Module):
@@ -487,28 +495,7 @@ class Block_crossatt(nn.Module):
         x = x + self.attn(self.ln1(x), self.ln3(word_emb))
         x = x + self.mlp(self.ln2(x))
         return x
-#TODO    
-class InterGroupCNN(nn.Module):
-    def __init__(self):
-        super(InterGroupCNN, self).__init__()
-        # 处理组内特征的线性层或1x1卷积
-        self.group_feature_extractor = nn.Linear(2, 16)  # 将每个2维组映射到16维
-        # 用于组间关系的卷积层
-        self.inter_group_conv = nn.Conv1d(in_channels=16, out_channels=64, kernel_size=2, stride=1)  # 1x2卷积
-        # 最终映射到512维的线性层
-        self.fc = nn.Linear(64 * 3, 512)
-
-    def forward(self, x):
-        x = x.view(-1, 4, 2)  # 重塑输入为 (batch_size, groups, group_size)
-        x = self.group_feature_extractor(x)  # 对每个组内的2维进行特征提取
-        x = nn.ReLU()(x)
-        x = x.permute(0, 2, 1)  # 转换为 (batch_size, group_feature_dim, num_groups)
-        x = self.inter_group_conv(x)  # 对组间关系进行卷积操作
-        print(x.shape)
-        x = nn.ReLU()(x)
-        x = x.view(x.size(0), -1)  # 展平为 (batch_size, 64*3)
-        x = self.fc(x)  # 最终映射到512维度
-        return x
+    
 class CrossCondTransBase(nn.Module):
 
     def __init__(self, 
@@ -521,7 +508,6 @@ class CrossCondTransBase(nn.Module):
                 num_local_layer = 1,
                 n_head=8, 
                 drop_out_rate=0.1, 
-                fc_rate=4,
                 cfg=False):
         super().__init__()
         self.vqvae = vqvae
@@ -531,22 +517,15 @@ class CrossCondTransBase(nn.Module):
         self.cfg = cfg
         self.cond_emb = nn.Linear(clip_dim, embed_dim)
         self.pos_embedding = nn.Embedding(block_size, embed_dim)
-        #TODO 
-        if self.cfg:
-            self.speed_embedding = nn.Sequential(
-                    nn.Linear(2, 16),  
-                    nn.Conv1d(in_channels=16, out_channels=64, kernel_size=2, stride=1),  
-                    nn.Linear(64 * 3, 512)
-            )
         self.drop = nn.Dropout(drop_out_rate)
         # transformer block
-        self.blocks = nn.Sequential(*[Time_Block(embed_dim, block_size, n_head, drop_out_rate, fc_rate) for _ in range(num_layers-num_local_layer)])
+        self.blocks = nn.Sequential(*[Time_Block(embed_dim, block_size, n_head, drop_out_rate, cfg) for _ in range(num_layers-num_local_layer)])
         self.pos_embed = pos_encoding.PositionEmbedding(block_size, embed_dim, 0.0, False)
 
         self.num_local_layer = num_local_layer
         if num_local_layer > 0:
             self.word_emb = nn.Linear(clip_dim, embed_dim*5)
-            self.cross_att = nn.Sequential(*[Block_crossatt(embed_dim*5, block_size, n_head, drop_out_rate, fc_rate) for _ in range(num_local_layer)])
+            self.cross_att = nn.Sequential(*[Block_crossatt(embed_dim*5, block_size, n_head, drop_out_rate, cfg) for _ in range(num_local_layer)])
         self.block_size = block_size
 
         self.apply(self._init_weights)
@@ -563,9 +542,11 @@ class CrossCondTransBase(nn.Module):
             module.bias.data.zero_()
             module.weight.data.fill_(1.0)
     
-    def forward(self,idx, clip_feature, src_mask, word_emb,speed=0.):
+    def forward(self,idx, clip_feature, src_mask, word_emb, speed=None, idx_wo_speed=None):
         if len(idx) == 0:
             token_embeddings = self.cond_emb(clip_feature).unsqueeze(1)
+            if self.cfg:
+                token_embeddings_wo_speed = self.cond_emb(clip_feature).unsqueeze(1)
         else:
             b, t = idx.shape[:2]
             assert t <= self.block_size, "Cannot forward, model block size is exhausted."
@@ -574,6 +555,7 @@ class CrossCondTransBase(nn.Module):
 
             code_dim = self.vqvae.vqvae.code_dim
             token_embeddings = torch.empty((*idx.shape, code_dim), device=idx[0].device)
+            token_embeddings_wo_speed = torch.empty((*idx.shape, code_dim), device=idx[0].device)
             quantizers = [
                 self.vqvae.vqvae.teacher_net.quantizer_left_arm,
                 self.vqvae.vqvae.teacher_net.quantizer_right_arm,
@@ -585,22 +567,29 @@ class CrossCondTransBase(nn.Module):
                 token_embeddings[:,:,i,:][~learn_idx[i]] = quantizers[i].dequantize(idx[...,i][~learn_idx[i]]).requires_grad_(False)
                 token_embeddings[:,:,i,:][learn_idx[i]] = self.learn_tok_emb(idx[...,i][learn_idx[i]] - self.vqvae.vqvae.num_code)
             token_embeddings = self.to_emb(token_embeddings)  # [bs,t,5,d]
-
-            if self.num_local_layer > 0:
-                token_embeddings = token_embeddings.view(b, t, -1)
-                word_emb = self.word_emb(word_emb)
-                token_embeddings = self.pos_embed(token_embeddings)  # [bs,50,5*256]
-                for module in self.cross_att:
-                    token_embeddings = module(token_embeddings, word_emb)
-                token_embeddings = token_embeddings.view(b, t, 5, -1)
             token_embeddings = torch.cat([self.cond_emb(clip_feature).unsqueeze(1), token_embeddings], dim=1)
-        x = token_embeddings.unsqueeze(2)
-        if len(x.shape)==4:
-            x = x.unsqueeze(2) #[bs,t,1,51,d]
-        for block in self.blocks:
-            x = block(x, src_mask)
+            x = token_embeddings.unsqueeze(2)
+            if len(x.shape)==4:
+                x = x.unsqueeze(2) #[bs,t,1,51,d]
 
-        return x  # [bs,50,1024]
+            if self.cfg:
+                for i in range(5):
+                    token_embeddings_wo_speed[:,:,i,:][~learn_idx[i]] = quantizers[i].dequantize(idx_wo_speed[...,i][~learn_idx[i]]).requires_grad_(False)
+                    token_embeddings_wo_speed[:,:,i,:][learn_idx[i]] = self.learn_tok_emb(idx_wo_speed[...,i][learn_idx[i]] - self.vqvae.vqvae.num_code)
+                token_embeddings_wo_speed = self.to_emb(token_embeddings_wo_speed)  # [bs,t,5,d]
+                token_embeddings_wo_speed = torch.cat([self.cond_emb(clip_feature).unsqueeze(1), token_embeddings_wo_speed], dim=1)
+                con_x = token_embeddings_wo_speed.unsqueeze(2)
+                if len(con_x.shape)==4:
+                    con_x = con_x.unsqueeze(2) #[bs,t,1,51,d]
+        for block in self.blocks:
+            if self.cfg:
+                speed = speed.reshape(b,t,8)
+                x = block(x, src_mask,torch.zeros_like(speed),self.cfg)
+                con_x = block(con_x, src_mask,speed,self.cfg)
+                return x,con_x
+            else:
+                x = block(x, src_mask,self.cfg)
+                return x
 
 
 class CrossCondTransHead(nn.Module):
@@ -612,15 +601,15 @@ class CrossCondTransHead(nn.Module):
                 num_layers=2, 
                 n_head=8, 
                 drop_out_rate=0.1, 
-                fc_rate=4,
-                cfg=False):
+                cfg=False
+                ):
         super().__init__()
 
-        self.blocks = nn.Sequential(*[Time_Block(embed_dim, block_size, n_head, drop_out_rate, fc_rate) for _ in range(num_layers)])
+        self.blocks = nn.Sequential(*[Time_Block(embed_dim, block_size, n_head, drop_out_rate, cfg) for _ in range(num_layers)])
         self.ln_f = nn.LayerNorm(embed_dim)
         self.head = nn.Linear(embed_dim, num_vq, bias=False)
         self.block_size = block_size
-
+        self.cfg = cfg
         self.apply(self._init_weights)
 
     def get_block_size(self):
@@ -635,13 +624,17 @@ class CrossCondTransHead(nn.Module):
             module.bias.data.zero_()
             module.weight.data.fill_(1.0)
 
-    def forward(self, x, src_mask):
-        if len(x.shape) == 4:
-            x = x.squeeze(2)
-        for block in self.blocks:
-            x = block(x, src_mask)
+    def forward(self, x, src_mask, con_x=None, speed=None, w=1.0):
+        if self.cfg:
+            for block in self.blocks:
+                x = block(x, src_mask,torch.zeros_like(speed),self.cfg)
+                con_x = block(con_x, src_mask,speed,self.cfg)
+            x = con_x + w * (x-con_x)
+                
+        else:
+            for block in self.blocks:
+                x = block(x, src_mask)
         x = self.ln_f(x)
-        #TODO check head
         logits = self.head(x)
         return logits
 
