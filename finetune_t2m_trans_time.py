@@ -8,15 +8,16 @@ from torch.distributions import Categorical
 import json
 import clip
 import options.option_transformer as option_trans
-from models.vqvae_multi import VQVAE_MULTI_V2
-from models.vqvae_general import VQVAE_decode_only
+from models.vqvae_multi import VQVAE_MULTI
+from models.vqvae_general import VQVAE_decode
 import utils.utils_model as utils_model
 import utils.eval_trans as eval_trans
 from dataset import dataset_TM_finetune
 from dataset import dataset_TM_train
 from dataset import dataset_TM_eval
 from dataset import dataset_tokenize
-import models.t2m_timesformer_trajectory as trans
+import models.t2m_timesformer as trans
+# import models.t2m_timesformer as trans
 from options.get_eval_option import get_opt
 from models.evaluator_wrapper import EvaluatorModelWrapper
 import warnings
@@ -38,7 +39,7 @@ init_save_folder(args)
 # [TODO] make the 'output/' folder as arg
 args.vq_dir = f'./output/vq/{args.vq_name}' #os.path.join("./dataset/KIT-ML" if args.dataname == 'kit' else "./dataset/HumanML3D", f'{args.vq_name}')
 
-codebook_dir_tune = f'{args.vq_dir}/codebook_tune/'
+codebook_dir_tune = f'{args.vq_dir}/codebook_trajectory/'
 codebook_dir = f'{args.vq_dir}/codebook/'
 # args.resume_pth = f'{args.vq_dir}/net_last.pth'
 os.makedirs(args.vq_dir, exist_ok = True)
@@ -85,7 +86,7 @@ class TextCLIP(torch.nn.Module):
         return enctxt, word_emb
 clip_model = TextCLIP(clip_model)
 # if args.teacher_pth:
-teacher_net= VQVAE_MULTI_V2(args, ## use args to define different parameters in different quantizers
+teacher_net= VQVAE_MULTI(args, ## use args to define different parameters in different quantizers
                         args.nb_code,#8192
                         args.code_dim,#32
                         args.output_emb_width,#512
@@ -99,7 +100,7 @@ teacher_net= VQVAE_MULTI_V2(args, ## use args to define different parameters in 
                         {'mean': torch.from_numpy(val_loader.dataset.mean).cuda().float(), 
                         'std': torch.from_numpy(val_loader.dataset.std).cuda().float()},
                         True)
-net= VQVAE_decode_only(args, ## use args to define different parameters in different quantizers
+net= VQVAE_decode(args, ## use args to define different parameters in different quantizers
                         teacher_net,
                         args.nb_code,#8192
                         args.code_dim,#32
@@ -115,9 +116,11 @@ net= VQVAE_decode_only(args, ## use args to define different parameters in diffe
 print ('loading checkpoint from {}'.format(args.resume_pth))
 logger.info('loading checkpoint from {}'.format(args.resume_pth))
 ckpt = torch.load(args.resume_pth, map_location='cpu')
+
 net.load_state_dict(ckpt['net'], strict=True)
 net.eval()
 net.cuda()
+net.requires_grad_(False)
 
 class VQVAE_WRAPPER(torch.nn.Module):
     def __init__(self, vqvae) :
@@ -127,7 +130,6 @@ class VQVAE_WRAPPER(torch.nn.Module):
     def forward(self, *args, **kwargs):
         return self.vqvae(*args, **kwargs)
 net=VQVAE_WRAPPER(net)
-
 trans_encoder = trans.Text2Motion_Transformer(vqvae=net,
                                 num_vq=args.nb_code, 
                                 embed_dim=args.embed_dim_gpt, 
@@ -139,17 +141,35 @@ trans_encoder = trans.Text2Motion_Transformer(vqvae=net,
                                 drop_out_rate=args.drop_out_rate, 
                                 fc_rate=args.ff_rate,)
 
-trans_encoder.eval()
-trans_encoder.adopt_finetune()
-
+trans_encoder.train()
+trans_encoder.requires_grad_(True)
 if args.resume_trans is not None:
-    print ('loading transformer checkpoint from {}'.format(args.resume_trans))
+    print('loading transformer checkpoint from {}'.format(args.resume_trans))
+    logger.info('loading transformer from {}'.format(args.resume_trans))
     ckpt = torch.load(args.resume_trans, map_location='cpu')
     trans_encoder.load_state_dict(ckpt['trans'], strict=False)
 trans_encoder.cuda()
-# trans_encoder = torch.nn.DataParallel(trans_encoder)
+trans_encoder = torch.nn.DataParallel(trans_encoder)
+#
+# parameters = []
+# for block in trans_encoder.module.trans_base.blocks:
+#     #block.attn.speed_emb.train()
+#     block.attn.speed_emb.requires_grad_(True)
+#     parameters.extend(list(block.attn.speed_emb.parameters()))
+#     # block.attn.fuse_emb.train()
+#     # block.attn.fuse_emb.requires_grad_(True)
+#     # parameters.extend(list(block.attn.fuse_emb.parameters()))
 
+# for block in trans_encoder.module.trans_head.blocks:
+#     # block.attn.speed_emb.train()
+#     block.attn.speed_emb.requires_grad_(True)
+#     parameters.extend(list(block.attn.speed_emb.parameters()))
+#     # block.attn.fuse_emb.train()
+#     # block.attn.fuse_emb.requires_grad_(True)
+#     # parameters.extend(list(block.attn.fuse_emb.parameters()))
 ##### ---- Optimizer & Scheduler ---- #####
+#optimizer = utils_model.initial_optim_tune('noVQ', args.lr, args.weight_decay, parameters, args.optimizer)
+
 optimizer = utils_model.initial_optim(args.decay_option, args.lr, args.weight_decay, trans_encoder, args.optimizer)
 scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=args.lr_scheduler, gamma=args.gamma)
 
@@ -170,10 +190,15 @@ if len(os.listdir(codebook_dir_tune)) == 0:
         pose_wo_speed = pose.clone()
         pose_wo_speed[:, :, 1:3] = 0.
         target_wo_speed = net.vqvae.teacher_net(pose_wo_speed, type='encode')
+        target = net.vqvae.teacher_net(pose, type='encode')
         target_wo_speed = target_wo_speed.cpu().numpy()
+        target = target.cpu().numpy()
+        speed = pose[:, :, 1:3].reshape(bs,-1, 8).cpu().numpy()
+        assert target.shape[:-1] == target_wo_speed.shape[:-1] == speed.shape[:-1]
+        np.save(pjoin(codebook_dir_tune, name[0] +'.npy'), target)
         np.save(pjoin(codebook_dir_tune, name[0] +'_wo_speed.npy'), target_wo_speed)
-        np.save(pjoin(codebook_dir_tune, name[0] +'_speed.npy'), pose[:, :, 1:3].reshape(bs,-1, 8).cpu().numpy())
-
+        np.save(pjoin(codebook_dir_tune, name[0] +'_speed.npy'), speed)
+#TODO wo_speed
 tune_loader = dataset_TM_finetune.DATALoader(args.dataname, args.batch_size, args.nb_code, codebook_dir_tune, codebook_dir, unit_length=2**args.down_t,multi_sep=True)
 tune_loader_iter = dataset_TM_finetune.cycle(tune_loader)
         
@@ -186,6 +211,7 @@ best_top2=0
 best_top3=0 
 best_matching=100 
 
+#TODO
 pred_pose_eval, pose, m_length, clip_text, best_fid, best_iter, best_div, best_top1, best_top2, best_top3, best_matching, best_multi, writer, logger = eval_trans.evaluation_time_transformer_trajectory(args.out_dir, val_loader, net, trans_encoder, logger, writer, 0, best_fid=1000, best_iter=0, best_div=100, best_top1=0, best_top2=0, best_top3=0, best_matching=100, clip_model=clip_model, eval_wrapper=eval_wrapper)
 
 def get_acc(cls_pred, target, mask):
@@ -199,12 +225,10 @@ def get_acc(cls_pred, target, mask):
 # while nb_iter <= args.total_iter:
 for nb_iter in tqdm(range(1, args.total_iter + 1), position=0, leave=True):
     batch = next(tune_loader_iter)
-    #TODO change the name
     clip_text, m_tokens, m_tokens_wo_speed, velocity, m_tokens_len = batch
 
     velocity = velocity.to(torch.float32)
     velocity = velocity.cuda()
-    
     m_tokens = m_tokens.cuda()
     m_tokens_wo_speed = m_tokens_wo_speed.cuda()
     m_tokens_len = m_tokens_len.cuda()
@@ -212,17 +236,15 @@ for nb_iter in tqdm(range(1, args.total_iter + 1), position=0, leave=True):
     target = m_tokens
     input = m_tokens_wo_speed    # (bs, 26)
     batch_size, max_len = input.shape[:2]
-
-    # Random Drop Text
-    # text_mask = np.random.random(len(clip_text)) > .05
-    # clip_text = np.array(clip_text)
-    # clip_text[~text_mask] = ''
     
-    #[b,77]
+
+    #Random Drop Text
+    text_mask = np.random.random(len(clip_text)) > .25
+    clip_text = np.array(clip_text)
+    clip_text[~text_mask] = ''
+
     text = clip.tokenize(clip_text, truncate=True).cuda()
-    #[bs,512],[bs,77,512]
     feat_clip_text, word_emb = clip_model(text)
-    #[bs,1,5,512]
     feat_clip_text = feat_clip_text.unsqueeze(1).repeat(1,5,1)
     # [INFO] Swap input tokens
     if args.pkeep == -1:
@@ -239,10 +261,7 @@ for nb_iter in tqdm(range(1, args.total_iter + 1), position=0, leave=True):
     input_indices = mask*input+(1-mask)*r_indices
     # Time step masking
     mask_id = get_model(net).vqvae.num_code + 2
-    # rand_time = uniform((batch_size,), device = target.device)
-    # rand_mask_probs = cosine_schedule(rand_time)
     rand_mask_probs = torch.zeros(batch_size,device = m_tokens_len.device).float().uniform_(0.5, 1)
-    # rand_mask_probs = cosine_schedule(rand_mask_probs)
     num_token_masked = (m_tokens_len * rand_mask_probs).round().clamp(min = 1)
     batch_randperm = torch.rand((batch_size, max_len),device = input.device)
     batch_randperm = batch_randperm.argsort(dim=-1)
@@ -253,21 +272,25 @@ for nb_iter in tqdm(range(1, args.total_iter + 1), position=0, leave=True):
     seq_mask = generate_src_mask(max_len, m_tokens_len+1)
     att_txt = None
     cls_pred = trans_encoder(masked_input_indices, feat_clip_text, src_mask = seq_mask, att_txt=att_txt, word_emb=word_emb,speed=velocity)[:, 1:]
+    # cls_pred = trans_encoder(masked_input_indices, feat_clip_text, src_mask = seq_mask, att_txt=att_txt, word_emb=word_emb)[:, 1:]
     cls_pred = cls_pred.squeeze(2)
     # [INFO] Compute xent loss as a batch
     weights = seq_mask_no_end / (seq_mask_no_end.sum(-1).unsqueeze(-1) * seq_mask_no_end.shape[0])
     cls_pred_seq_masked = cls_pred[seq_mask_no_end, :].view(-1, cls_pred.shape[-1])
     target_seq_masked = target[seq_mask_no_end]
     weight_seq_masked = weights[seq_mask_no_end]
-    #TODO check loss
     loss_cls = F.cross_entropy(cls_pred_seq_masked, target_seq_masked, reduction = 'none')
     loss_cls = (loss_cls * weight_seq_masked).sum()
 
-    ## global loss
-    # optimizer.zero_grad()
-    # loss_cls.backward()
-    # optimizer.step()
-    # scheduler.step()
+    probs_seq_masked = torch.softmax(cls_pred_seq_masked, dim=-1)
+    _, cls_pred_seq_masked_index = torch.max(probs_seq_masked, dim=-1)
+    target_seq_masked = torch.masked_select(target, seq_mask_no_end)
+    right_seq_masked = (cls_pred_seq_masked_index == target_seq_masked).sum()
+    # global loss
+    optimizer.zero_grad()
+    loss_cls.backward()
+    optimizer.step()
+    scheduler.step()
 
     if nb_iter % args.print_iter ==  0 :
         probs_seq_masked = torch.softmax(cls_pred_seq_masked, dim=-1)

@@ -1,6 +1,6 @@
 import torch.nn as nn
 from models.encdec import Encoder, Decoder
-from models.quantize_cnn import QuantizeEMAReset, Quantizer, QuantizeEMA_Frozen, QuantizeReset
+from models.quantize_cnn import QuantizeEMAReset, Quantizer, QuantizeEMA, QuantizeReset
 from models.t2m_trans import Decoder_Transformer, Encoder_Transformer
 from exit.utils import generate_src_mask
 import torch
@@ -35,7 +35,6 @@ class VQVAE_SEP(nn.Module):
         self.code_dim = code_dim
         if moment is not None:
             self.moment = moment
-            #TODO check the meaning of these values
             self.register_buffer('mean_upper', torch.tensor([0.1216, 0.2488, 0.2967, 0.5027, 0.4053, 0.4100, 0.5703, 0.4030, 0.4078, 0.1994, 0.1992, 0.0661, 0.0639], dtype=torch.float32))
             self.register_buffer('std_upper', torch.tensor([0.0164, 0.0412, 0.0523, 0.0864, 0.0695, 0.0703, 0.1108, 0.0853, 0.0847, 0.1289, 0.1291, 0.2463, 0.2484], dtype=torch.float32))
         # self.quantizer = QuantizeEMAReset(nb_code, code_dim, args)
@@ -106,14 +105,11 @@ class VQVAE_SEP(nn.Module):
 
             upper_emb = x[..., HML_UPPER_BODY_MASK]
             lower_emb = x[..., HML_LOWER_BODY_MASK]
-            # (bs, 64, Jx3) -> (bs, Jx3, 64)
             upper_emb = self.preprocess(upper_emb)
-            #(bs, Jx3, 64) -> (bsz,16,16)?
             upper_emb = self.encoder_upper(upper_emb)
             upper_emb, loss_upper, perplexity = self.quantizer_upper(upper_emb)
 
             lower_emb = self.preprocess(lower_emb)
-            #(bs, Jx3, 64) -> (bsz,16,16)?
             lower_emb = self.encoder_lower(lower_emb)
             lower_emb, loss_lower, perplexity = self.quantizer_lower(lower_emb)
             loss = loss_upper + loss_lower
@@ -163,7 +159,7 @@ class VQVAE_SEP(nn.Module):
             lower_emb = lower_emb.reshape(-1, lower_emb.shape[-1])
             lower_code_idx = self.quantizer_lower.quantize(lower_emb)
             lower_code_idx = lower_code_idx.view(N, -1)
-            #[b,50,2]
+
             code_idx = torch.cat([upper_code_idx.unsqueeze(-1), lower_code_idx.unsqueeze(-1)], dim=-1)
             return code_idx
 

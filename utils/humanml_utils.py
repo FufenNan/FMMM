@@ -1,6 +1,8 @@
 import numpy as np
 def get_hml_joint_mask(joints,place):
     HML_binary = np.array([i in joints for i in range(NUM_HML_JOINTS)])
+    #TODO devide left foot contact and right foot contact
+    # l_foot r_foot 2+2
     if place == 'lower':
         HML_mask = np.concatenate(([True]*(1+2+1),
                                         HML_binary[1:].repeat(3),
@@ -14,6 +16,7 @@ def get_hml_joint_mask(joints,place):
                                         HML_binary.repeat(3),
                                         [False]*4))
     return HML_mask
+
 HML_JOINT_NAMES = [
     'pelvis',
     'left_hip',
@@ -41,10 +44,12 @@ HML_JOINT_NAMES = [
 
 NUM_HML_JOINTS = len(HML_JOINT_NAMES)  # 22 SMPLH body joints
 
-HML_LEFT_ARM_JOINTS = [HML_JOINT_NAMES.index(name) for name in ['left_collar', 'left_shoulder', 'left_elbow', 'left_wrist','spine1','spine2','spine3','head','neck',]]
-HML_RIGHT_ARM_JOINTS = [HML_JOINT_NAMES.index(name) for name in ['right_collar', 'right_shoulder', 'right_elbow', 'right_wrist','spine1','spine2','spine3','head','neck',]]
-HML_LEFT_LEG_JOINTS = [HML_JOINT_NAMES.index(name) for name in ['left_ankle', 'left_foot','left_hip','left_knee','pelvis',]]
+HML_LEFT_ARM_JOINTS = [HML_JOINT_NAMES.index(name) for name in ['left_collar', 'left_shoulder', 'left_elbow', 'left_wrist',]]
+HML_RIGHT_ARM_JOINTS = [HML_JOINT_NAMES.index(name) for name in ['right_collar', 'right_shoulder', 'right_elbow', 'right_wrist']]
+HML_LEFT_LEG_JOINTS = [HML_JOINT_NAMES.index(name) for name in ['left_ankle', 'left_foot','left_hip','left_knee','pelvis']]
 HML_RIGHT_LEG_JOINTS = [HML_JOINT_NAMES.index(name) for name in ['right_ankle', 'right_foot','right_hip','right_knee','pelvis']]
+HML_SPINE_JOINTS = [HML_JOINT_NAMES.index(name) for name in ['spine1','spine2','spine3','head','neck']]
+
 HML_LOWER_BODY_JOINTS = [HML_JOINT_NAMES.index(name) for name in ['pelvis', 'left_hip', 'right_hip', 'left_knee', 'right_knee', 'left_ankle', 'right_ankle', 'left_foot', 'right_foot',]]
 SMPL_UPPER_BODY_JOINTS = [i for i in range(len(HML_JOINT_NAMES)) if i not in HML_LOWER_BODY_JOINTS]
 
@@ -75,6 +80,7 @@ HML_LEFT_ARM_MASK=get_hml_joint_mask(HML_LEFT_ARM_JOINTS,'upper')
 HML_RIGHT_ARM_MASK=get_hml_joint_mask(HML_RIGHT_ARM_JOINTS,'upper')
 HML_LEFT_LEG_MASK=get_hml_joint_mask(HML_LEFT_LEG_JOINTS,'lower')
 HML_RIGHT_LEG_MASK=get_hml_joint_mask(HML_RIGHT_LEG_JOINTS,'lower')
+HML_SPINE_MASK=get_hml_joint_mask(HML_SPINE_JOINTS,'upper')
 
 ALL_JOINT_FALSE = np.full(*HML_ROOT_BINARY.shape, False)
 HML_UPPER_BODY_JOINTS_BINARY = np.array([i in SMPL_UPPER_BODY_JOINTS for i in range(NUM_HML_JOINTS)])

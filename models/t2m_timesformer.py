@@ -291,7 +291,7 @@ class Text2Motion_Transformer(nn.Module):
         if token_cond is not None:
             ids = token_cond.clone()
             ids[~src_token_mask_noend] = pad_id
-            num_token_cond = (ids == mask_id).sum(-1)
+            num_token_cond = (ids == mask_id).sum(-1)[0][0]
         else:
             ids = torch.full(shape, mask_id, dtype=torch.long, device=clip_feature.device)
         
@@ -656,6 +656,7 @@ class CrossCondTransBase(nn.Module):
                 for module in self.cross_att:
                     token_embeddings = module(token_embeddings, word_emb)
                 token_embeddings = token_embeddings.view(b, t, 5, -1)
+                
             token_embeddings = torch.cat([self.cond_emb(clip_feature).unsqueeze(1), token_embeddings], dim=1)
         x = token_embeddings.unsqueeze(2)
         if len(x.shape)==4:

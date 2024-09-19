@@ -44,7 +44,8 @@ class VQMotionDataset(data.Dataset):
         with cs.open(split_file, 'r') as f:
             for line in f.readlines():
                 id_list.append(line.strip())
-
+        # from itertools import islice
+        # for name in tqdm(islice(id_list, 1000)):
         for name in tqdm(id_list):
             try:
                 motion = np.load(pjoin(self.motion_dir, name + '.npy'))

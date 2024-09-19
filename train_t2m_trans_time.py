@@ -8,13 +8,11 @@ from torch.distributions import Categorical
 import json
 import clip
 import options.option_transformer as option_trans
-from models.vqvae_multi import VQVAE_MULTI_V2
-from models.vqvae_general import VQVAE_decode_only
+from models.vqvae_multi import VQVAE_MULTI
+from models.vqvae_general import VQVAE_decode
 import utils.utils_model as utils_model
 import utils.eval_trans as eval_trans
-from dataset import dataset_TM_train
-from dataset import dataset_TM_eval
-from dataset import dataset_tokenize
+from dataset import dataset_TM_train,dataset_TM_eval,dataset_tokenize
 import models.t2m_timesformer as trans
 from options.get_eval_option import get_opt
 from models.evaluator_wrapper import EvaluatorModelWrapper
@@ -36,7 +34,10 @@ init_save_folder(args)
 
 # [TODO] make the 'output/' folder as arg
 args.vq_dir = f'./output/vq/{args.vq_name}' #os.path.join("./dataset/KIT-ML" if args.dataname == 'kit' else "./dataset/HumanML3D", f'{args.vq_name}')
-codebook_dir = f'{args.vq_dir}/codebook/'
+if args.wo_trajectory:
+    codebook_dir = f'{args.vq_dir}/codebook_wo_trajectory/'
+else:
+    codebook_dir = f'{args.vq_dir}/codebook/'
 # args.resume_pth = f'{args.vq_dir}/net_last.pth'
 os.makedirs(args.vq_dir, exist_ok = True)
 os.makedirs(codebook_dir, exist_ok = True)
@@ -51,10 +52,10 @@ logger.info(json.dumps(vars(args), indent=4, sort_keys=True))
 
 from utils.word_vectorizer import WordVectorizer
 w_vectorizer = WordVectorizer('./glove', 'our_vab')
+#TODO 
 val_loader = dataset_TM_eval.DATALoader(args.dataname, False, 32, w_vectorizer)
 
 dataset_opt_path = 'checkpoints/kit/Comp_v6_KLD005/opt.txt' if args.dataname == 'kit' else 'checkpoints/t2m/Comp_v6_KLD005/opt.txt'
-
 wrapper_opt = get_opt(dataset_opt_path, torch.device('cuda'))
 eval_wrapper = EvaluatorModelWrapper(wrapper_opt)
 
@@ -82,10 +83,9 @@ class TextCLIP(torch.nn.Module):
         return enctxt, word_emb
 clip_model = TextCLIP(clip_model)
 # if args.teacher_pth:
-teacher_net= VQVAE_MULTI_V2(args, ## use args to define different parameters in different quantizers
+teacher_net= VQVAE_MULTI(args, ## use args to define different parameters in different quantizers
                         args.nb_code,#8192
                         args.code_dim,#32
-                        args.output_emb_width,#512
                         args.down_t,#2
                         args.stride_t,#2
                         args.width,#512
@@ -96,11 +96,10 @@ teacher_net= VQVAE_MULTI_V2(args, ## use args to define different parameters in 
                         {'mean': torch.from_numpy(val_loader.dataset.mean).cuda().float(), 
                         'std': torch.from_numpy(val_loader.dataset.std).cuda().float()},
                         True)
-net= VQVAE_decode_only(args, ## use args to define different parameters in different quantizers
+net= VQVAE_decode(args, ## use args to define different parameters in different quantizers
                         teacher_net,
                         args.nb_code,#8192
                         args.code_dim,#32
-                        args.output_emb_width,#512
                         args.down_t,#2
                         args.stride_t,#2
                         args.width,#512
@@ -157,6 +156,8 @@ if len(os.listdir(codebook_dir)) == 0:
     train_loader_token = dataset_tokenize.DATALoader(args.dataname, 1, unit_length=2**args.down_t)
     for batch in tqdm(train_loader_token,position=0, leave=True):
         pose, name = batch
+        if args.wo_trajectory:
+            pose[:,:,1:3] = 0
         bs, seq = pose.shape[0], pose.shape[1]
 
         pose = pose.cuda().float() # bs, nb_joints, joints_dim, seq_len
@@ -164,7 +165,7 @@ if len(os.listdir(codebook_dir)) == 0:
         target = target.cpu().numpy()
         np.save(pjoin(codebook_dir, name[0] +'.npy'), target)
 
-
+#TODO 
 train_loader = dataset_TM_train.DATALoader(args.dataname, args.batch_size, args.nb_code, codebook_dir, unit_length=2**args.down_t,multi_sep=True)
 train_loader_iter = dataset_TM_train.cycle(train_loader)
 
@@ -177,7 +178,8 @@ best_top1=0
 best_top2=0 
 best_top3=0 
 best_matching=100 
-# pred_pose_eval, pose, m_length, clip_text, best_fid, best_iter, best_div, best_top1, best_top2, best_top3, best_matching, best_multi, writer, logger = eval_trans.evaluation_time_transformer(args.out_dir, val_loader, net, trans_encoder, logger, writer, 0, best_fid=1000, best_iter=0, best_div=100, best_top1=0, best_top2=0, best_top3=0, best_matching=100, clip_model=clip_model, eval_wrapper=eval_wrapper)
+#TODO
+#pred_pose_eval, pose, m_length, clip_text, best_fid, best_iter, best_div, best_top1, best_top2, best_top3, best_matching, best_multi, writer, logger = eval_trans.evaluation_time_transformer(args.out_dir, val_loader, net, trans_encoder, logger, writer, 0, best_fid=1000, best_iter=0, best_div=100, best_top1=0, best_top2=0, best_top3=0, best_matching=100, clip_model=clip_model, eval_wrapper=eval_wrapper)
 
 def get_acc(cls_pred, target, mask):
     cls_pred = torch.masked_select(cls_pred, mask.unsqueeze(-1)).view(-1, cls_pred.shape[-1])
@@ -190,7 +192,7 @@ def get_acc(cls_pred, target, mask):
 # while nb_iter <= args.total_iter:
 for nb_iter in tqdm(range(1, args.total_iter + 1), position=0, leave=True):
     batch = next(train_loader_iter)
-    #TODO receive multiple texts
+    #TODO
     clip_text, m_tokens, m_tokens_len = batch
     m_tokens, m_tokens_len = m_tokens.cuda(), m_tokens_len.cuda()
     bs = m_tokens.shape[0]
@@ -243,18 +245,18 @@ for nb_iter in tqdm(range(1, args.total_iter + 1), position=0, leave=True):
     cls_pred = trans_encoder(masked_input_indices, feat_clip_text, src_mask = seq_mask, att_txt=att_txt, word_emb=word_emb)[:, 1:]
     cls_pred = cls_pred.squeeze(2)
     # [INFO] Compute xent loss as a batch
+    
     weights = seq_mask_no_end / (seq_mask_no_end.sum(-1).unsqueeze(-1) * seq_mask_no_end.shape[0])
     cls_pred_seq_masked = cls_pred[seq_mask_no_end, :].view(-1, cls_pred.shape[-1])
     target_seq_masked = target[seq_mask_no_end]
     weight_seq_masked = weights[seq_mask_no_end]
     loss_cls = F.cross_entropy(cls_pred_seq_masked, target_seq_masked, reduction = 'none')
     loss_cls = (loss_cls * weight_seq_masked).sum()
-
-    ## global loss
-    # optimizer.zero_grad()
-    # loss_cls.backward()
-    # optimizer.step()
-    # scheduler.step()
+    # global loss
+    optimizer.zero_grad()
+    loss_cls.backward()
+    optimizer.step()
+    scheduler.step()
 
     if nb_iter % args.print_iter ==  0 :
         probs_seq_masked = torch.softmax(cls_pred_seq_masked, dim=-1)

@@ -6,7 +6,6 @@ def get_args_parser():
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     
     ## dataloader
-    
     parser.add_argument('--dataname', type=str, default='t2m', help='dataset directory')
     parser.add_argument('--batch-size', default=128, type=int, help='batch size')
     parser.add_argument('--fps', default=[20], nargs="+", type=int, help='frames per second')
@@ -59,13 +58,15 @@ def get_args_parser():
     parser.add_argument('--exp-name', type=str, default='exp_debug', help='name of the experiment, will create a file inside out-dir')
     parser.add_argument('--vq-name', type=str, default='VQVAE', help='name of the generated dataset .npy, will create a file inside out-dir')
     parser.add_argument('--teacher-pth', type=str, help='path to teacher vqvae')
+
     ## other
     parser.add_argument('--print-iter', default=200, type=int, help='print frequency')
     parser.add_argument('--eval-iter', default=10000, type=int, help='evaluation frequency')
     parser.add_argument('--seed', default=123, type=int, help='seed for initializing training. ')
     parser.add_argument("--if-maxtest", action='store_true', help="test in max")
     parser.add_argument('--pkeep', type=float, default=.5, help='keep rate for gpt training')
-    
+    parser.add_argument('--wo-trajectory', action='store_true', help='no trajectory')
+    parser.add_argument('--w', type=float, default=.5, help='local text cfg scale')
     ## generator
     parser.add_argument('--text', type=str, help='text')
     parser.add_argument('--length', type=int, help='length')

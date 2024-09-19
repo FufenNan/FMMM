@@ -17,10 +17,10 @@
 . /home/haoyum3/anaconda3/etc/profile.d/conda.sh
 cd /home/haoyum3/MMM
 conda activate MMM
-name='vq_general_decoder'
+name='vq_general_decoder2'
 dataset_name='t2m'
 debug='f'
-export CUDA_VISIBLE_DEVICES=0
+export CUDA_VISIBLE_DEVICES=4
 python3 train_vq_general.py \
     --batch-size 256 \
     --lr 1e-4 \
@@ -40,6 +40,6 @@ python3 train_vq_general.py \
     --recons-loss l1_smooth \
     --exp-name ${name} \
     --warm-up-iter 1000\
-    --sep-multi \
-    --teacher-pth "/home/haoyum3/MMM/output/vq/2024-08-16-23-15-13_multi_vq_256_32_5/net_last.pth"
+    --teacher-pth "output/vq/2024-08-16-23-15-13_multi_vq_256_32_5/net_last.pth"\
+    # --wo-trajectory
 sleep 500

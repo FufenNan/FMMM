@@ -17,16 +17,16 @@
 . /home/haoyum3/anaconda3/etc/profile.d/conda.sh
 cd /home/haoyum3/MMM
 conda activate MMM
-name='multi_vq_128_32_5_wo_reset'
+name='multi_vq_256_32_5_wo_speed'
 dataset_name='t2m'
 debug='f'
-export CUDA_VISIBLE_DEVICES=0
-python3 train_vq_multi_v2.py \
+export CUDA_VISIBLE_DEVICES=2
+python3 train_vq_multi.py \
     --batch-size 256 \
-    --lr 1e-4 \
+    --lr 0.00015 \
     --total-iter 300000  \
     --lr-scheduler 200000 \
-    --nb-code 128 \
+    --nb-code 256 \
     --code-dim 32 \
     --width 512 \
     --down-t 2 \
@@ -40,6 +40,6 @@ python3 train_vq_multi_v2.py \
     --recons-loss l1_smooth \
     --exp-name ${name} \
     --warm-up-iter 1000\
-    --sep-multi
+    --wo-trajectory
 sleep 500
 # --sep-uplow

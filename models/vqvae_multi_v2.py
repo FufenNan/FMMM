@@ -6,7 +6,7 @@ from exit.utils import generate_src_mask
 import torch
 from utils.humanml_utils_v2 import UPPER_JOINT_Y_MASK,HML_LEFT_ARM_MASK,HML_RIGHT_ARM_MASK,HML_LEFT_LEG_MASK,HML_RIGHT_LEG_MASK,HML_ROOT_MASK,HML_SPINE_MASK,OVER_LAP_LOWER_MASK
 import numpy as np
-class VQVAE_MULTI_V2(nn.Module):
+class VQVAE_MULTI(nn.Module):
     def __init__(self,
                  args,
                  nb_code=256,
@@ -33,7 +33,7 @@ class VQVAE_MULTI_V2(nn.Module):
             arm_dim=48
             leg_dim=59
             spine_dim=60
-            root_dim=7
+            
         self.code_dim = code_dim
         if moment is not None:
             self.moment = moment
@@ -42,32 +42,32 @@ class VQVAE_MULTI_V2(nn.Module):
  
         self.sep_decoder = sep_decoder
         if self.sep_decoder:
-            self.decoder_left_arm = Decoder(arm_dim, int(code_dim/5), down_t, stride_t, width, depth, dilation_growth_rate, activation=activation, norm=norm)
-            self.decoder_right_arm = Decoder(arm_dim, int(code_dim/5), down_t, stride_t, width, depth, dilation_growth_rate, activation=activation, norm=norm)        
-            self.decoder_right_leg = Decoder(leg_dim, int(code_dim/5), down_t, stride_t, width, depth, dilation_growth_rate, activation=activation, norm=norm)
-            self.decoder_left_leg = Decoder(leg_dim, int(code_dim/5), down_t, stride_t, width, depth, dilation_growth_rate, activation=activation, norm=norm)  
-            self.decoder_spine = Decoder(spine_dim, int(code_dim/5), down_t, stride_t, width, depth, dilation_growth_rate, activation=activation, norm=norm)  
+            self.decoder_left_arm = Decoder(arm_dim, int(code_dim), down_t, stride_t, width, depth, dilation_growth_rate, activation=activation, norm=norm)
+            self.decoder_right_arm = Decoder(arm_dim, int(code_dim), down_t, stride_t, width, depth, dilation_growth_rate, activation=activation, norm=norm)        
+            self.decoder_right_leg = Decoder(leg_dim, int(code_dim), down_t, stride_t, width, depth, dilation_growth_rate, activation=activation, norm=norm)
+            self.decoder_left_leg = Decoder(leg_dim, int(code_dim), down_t, stride_t, width, depth, dilation_growth_rate, activation=activation, norm=norm)  
+            self.decoder_spine = Decoder(spine_dim, int(code_dim), down_t, stride_t, width, depth, dilation_growth_rate, activation=activation, norm=norm)  
             self.decoder = Decoder(output_dim, code_dim, down_t, stride_t, width, depth, dilation_growth_rate, activation=activation, norm=norm)        
 
 
         self.num_code = nb_code
 
-        self.encoder_left_arm = Encoder(arm_dim, int(code_dim/5), down_t, stride_t, width, depth, dilation_growth_rate, activation=activation, norm=norm)
-        self.encoder_right_arm = Encoder(arm_dim, int(code_dim/5), down_t, stride_t, width, depth, dilation_growth_rate, activation=activation, norm=norm)        
-        self.encoder_right_leg = Encoder(leg_dim, int(code_dim/5), down_t, stride_t, width, depth, dilation_growth_rate, activation=activation, norm=norm)
-        self.encoder_left_leg = Encoder(leg_dim, int(code_dim/5), down_t, stride_t, width, depth, dilation_growth_rate, activation=activation, norm=norm) 
-        self.encoder_spine = Encoder(spine_dim, int(code_dim/5), down_t, stride_t, width, depth, dilation_growth_rate, activation=activation, norm=norm)
+        self.encoder_left_arm = Encoder(arm_dim, int(code_dim), down_t, stride_t, width, depth, dilation_growth_rate, activation=activation, norm=norm)
+        self.encoder_right_arm = Encoder(arm_dim, int(code_dim), down_t, stride_t, width, depth, dilation_growth_rate, activation=activation, norm=norm)        
+        self.encoder_right_leg = Encoder(leg_dim, int(code_dim), down_t, stride_t, width, depth, dilation_growth_rate, activation=activation, norm=norm)
+        self.encoder_left_leg = Encoder(leg_dim, int(code_dim), down_t, stride_t, width, depth, dilation_growth_rate, activation=activation, norm=norm) 
+        self.encoder_spine = Encoder(spine_dim, int(code_dim), down_t, stride_t, width, depth, dilation_growth_rate, activation=activation, norm=norm)
         
-        self.quantizer_left_arm = QuantizeEMAReset(nb_code, int(code_dim/5), args)
-        self.quantizer_right_arm = QuantizeEMAReset(nb_code, int(code_dim/5), args)
-        self.quantizer_right_leg = QuantizeEMAReset(nb_code, int(code_dim/5), args)
-        self.quantizer_left_leg = QuantizeEMAReset(nb_code, int(code_dim/5), args)
-        self.quantizer_spine = QuantizeEMAReset(nb_code, int(code_dim/5), args)
-        # self.quantizer_left_arm = QuantizeEMA_Frozen(nb_code, int(code_dim/5), args)
-        # self.quantizer_right_arm = QuantizeEMA_Frozen(nb_code, int(code_dim/5), args)
-        # self.quantizer_right_leg = QuantizeEMA_Frozen(nb_code, int(code_dim/5), args)
-        # self.quantizer_left_leg = QuantizeEMA_Frozen(nb_code, int(code_dim/5), args)
-        # self.quantizer_spine = QuantizeEMA_Frozen(nb_code, int(code_dim/5), args)
+        self.quantizer_left_arm = QuantizeEMAReset(nb_code, int(code_dim), args)
+        self.quantizer_right_arm = QuantizeEMAReset(nb_code, int(code_dim), args)
+        self.quantizer_right_leg = QuantizeEMAReset(nb_code, int(code_dim), args)
+        self.quantizer_left_leg = QuantizeEMAReset(nb_code, int(code_dim), args)
+        self.quantizer_spine = QuantizeEMAReset(nb_code, int(code_dim), args)
+        # self.quantizer_left_arm = QuantizeEMA(nb_code, int(code_dim), args)
+        # self.quantizer_right_arm = QuantizeEMA(nb_code, int(code_dim), args)
+        # self.quantizer_right_leg = QuantizeEMA(nb_code, int(code_dim), args)
+        # self.quantizer_left_leg = QuantizeEMA(nb_code, int(code_dim), args)
+        # self.quantizer_spine = QuantizeEMA(nb_code, int(code_dim), args)
 
         self.upper_map = []
         self.lower_map = []
@@ -301,6 +301,79 @@ class VQVAE_MULTI_V2(nn.Module):
                 x_decoder = self.decoder(x_d)
                 x_out = self.postprocess(x_decoder)
                 return x_out
+            
+        elif type=='motion_emb':
+            N, T, _ = x.shape
+            # TODO shift upper down in decoder?
+            x = self.shift_upper_down(x)
+
+            left_arm_emb = x[..., HML_LEFT_ARM_MASK]
+            left_arm_emb = self.preprocess(left_arm_emb)
+            left_arm_emb = self.encoder_left_arm(left_arm_emb)
+            left_arm_emb = self.postprocess(left_arm_emb)
+            left_arm_emb = left_arm_emb.reshape(-1, left_arm_emb.shape[-1])
+            left_arm_code_idx = self.quantizer_left_arm.quantize(left_arm_emb)
+            left_arm_code_idx = left_arm_code_idx.view(N, -1)
+            left_arm_emb = self.quantizer_left_arm.dequantize(left_arm_code_idx)
+
+            right_arm_emb = x[..., HML_RIGHT_ARM_MASK]
+            right_arm_emb = self.preprocess(right_arm_emb)
+            right_arm_emb = self.encoder_right_arm(right_arm_emb)
+            right_arm_emb = self.postprocess(right_arm_emb)
+            right_arm_emb = right_arm_emb.reshape(-1, right_arm_emb.shape[-1])
+            right_arm_code_idx = self.quantizer_right_arm.quantize(right_arm_emb)
+            right_arm_code_idx = right_arm_code_idx.view(N, -1)
+            right_arm_emb = self.quantizer_right_arm.dequantize(right_arm_code_idx)
+
+            left_leg_emb = x[..., HML_LEFT_LEG_MASK]
+            left_leg_emb = self.preprocess(left_leg_emb)
+            left_leg_emb = self.encoder_left_leg(left_leg_emb)
+            left_leg_emb = self.postprocess(left_leg_emb)
+            left_leg_emb = left_leg_emb.reshape(-1, left_leg_emb.shape[-1])
+            left_leg_code_idx = self.quantizer_left_leg.quantize(left_leg_emb)
+            left_leg_code_idx = left_leg_code_idx.view(N, -1)
+            left_leg_emb = self.quantizer_left_leg.dequantize(left_leg_code_idx)
+
+            right_leg_emb = x[..., HML_RIGHT_LEG_MASK]
+            right_leg_emb = self.preprocess(right_leg_emb)
+            right_leg_emb = self.encoder_right_leg(right_leg_emb)
+            right_leg_emb = self.postprocess(right_leg_emb)
+            right_leg_emb = right_leg_emb.reshape(-1, right_leg_emb.shape[-1])
+            right_leg_code_idx = self.quantizer_right_leg.quantize(right_leg_emb)
+            right_leg_code_idx = right_leg_code_idx.view(N, -1)
+            right_leg_emb = self.quantizer_right_leg.dequantize(right_leg_code_idx)
+
+            spine_emb = x[..., HML_SPINE_MASK]
+            spine_emb = self.preprocess(spine_emb)
+            spine_emb = self.encoder_spine(spine_emb)
+            spine_emb = self.postprocess(spine_emb)
+            spine_emb = spine_emb.reshape(-1, spine_emb.shape[-1])
+            spine_code_idx = self.quantizer_spine.quantize(spine_emb)
+            spine_code_idx = spine_code_idx.view(N, -1)
+            spine_emb = self.quantizer_spine.dequantize(spine_code_idx)
+
+            x_emb= torch.cat([left_arm_emb, right_arm_emb, left_leg_emb,right_leg_emb,spine_emb], dim=-1)
+            return x_emb.permute(0,2,1).contiguous()
+        
+        elif type=='token_emb':
+            left_arm_emb = self.quantizer_left_arm.dequantize(x[..., 0])
+            right_arm_emb = self.quantizer_right_arm.dequantize(x[..., 1])
+            left_leg_emb = self.quantizer_left_leg.dequantize(x[..., 2])
+            right_leg_emb = self.quantizer_right_leg.dequantize(x[..., 3])
+            spine_emb = self.quantizer_spine.dequantize(x[..., 4])
+
+            x_emb= torch.cat([left_arm_emb, right_arm_emb, left_leg_emb,right_leg_emb,spine_emb], dim=-1)
+            return x_emb.permute(0,2,1).contiguous()
+        elif type=='emb_token':
+            N, T, _ ,_ = x.shape
+            left_arm_code_idx = self.quantizer_left_arm.quantize(x[..., 0])
+            right_arm_code_idx = self.quantizer_right_arm.quantize(x[..., 1])
+            left_leg_code_idx = self.quantizer_left_leg.quantize(x[..., 2])
+            right_leg_code_idx = self.quantizer_right_leg.quantize(x[..., 3])
+            spine_code_idx = self.quantizer_spine.quantize(x[..., 4])
+            x_token = torch.cat([left_arm_code_idx.unsqueeze(-1), right_arm_code_idx.unsqueeze(-1), left_leg_code_idx.unsqueeze(-1), \
+                                  right_leg_code_idx.unsqueeze(-1),spine_code_idx.unsqueeze(-1)], dim=-1)
+            return x_token
 
     def preprocess(self, x):
         # (bs, T, Jx3) -> (bs, Jx3, T)

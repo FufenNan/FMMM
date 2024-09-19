@@ -4,14 +4,13 @@ from models.quantize_cnn import QuantizeEMAReset, Quantizer, QuantizeEMA_Frozen,
 from models.t2m_trans import Decoder_Transformer, Encoder_Transformer
 from exit.utils import generate_src_mask
 import torch
-from utils.humanml_utils_v2 import UPPER_JOINT_Y_MASK,HML_LEFT_ARM_MASK,HML_RIGHT_ARM_MASK,HML_LEFT_LEG_MASK,HML_RIGHT_LEG_MASK,HML_ROOT_MASK,HML_SPINE_MASK,OVER_LAP_LOWER_MASK
+from utils.humanml_utils import UPPER_JOINT_Y_MASK,HML_LEFT_ARM_MASK,HML_RIGHT_ARM_MASK,HML_LEFT_LEG_MASK,HML_RIGHT_LEG_MASK,HML_ROOT_MASK,HML_SPINE_MASK,OVER_LAP_LOWER_MASK
 import numpy as np
-class VQVAE_MULTI_V2(nn.Module):
+class VQVAE_MULTI(nn.Module):
     def __init__(self,
                  args,
                  nb_code=256,
                  code_dim=32,
-                 output_emb_width=512,
                  down_t=3,
                  stride_t=2,
                  width=512,
@@ -31,6 +30,8 @@ class VQVAE_MULTI_V2(nn.Module):
             self.nb_joints = 22
             output_dim = 263
             arm_dim=48
+            #Foot contact is not devided
+            # leg_dim=57
             leg_dim=59
             spine_dim=60
             root_dim=7
@@ -179,18 +180,10 @@ class VQVAE_MULTI_V2(nn.Module):
 
             loss = loss_left_arm + loss_right_arm + loss_left_leg + loss_right_leg + loss_spine
 
-            #TODO check rand_emb_idx
             if 'idx_noise' in kwargs and kwargs['idx_noise'] > 0:
                 upper_emb = self.rand_emb_idx(upper_emb, self.quantizer_upper, kwargs['idx_noise'])
                 lower_emb = self.rand_emb_idx(lower_emb, self.quantizer_lower, kwargs['idx_noise'])
-
-
-            # x_in = self.preprocess(x)
-            # x_encoder = self.encoder(x_in)
-        
-            # ## quantization
-            # x_quantized, loss, perplexity  = self.quantizer(x_encoder)
-
+                
             ## decoder
             if self.sep_decoder:
                 x_d_left_arm = self.decoder_left_arm(left_arm_emb)
@@ -371,8 +364,9 @@ class VQVAE_MULTI_V2(nn.Module):
             left_leg_code_idx = self.quantizer_left_leg.quantize(x[..., 2])
             right_leg_code_idx = self.quantizer_right_leg.quantize(x[..., 3])
             spine_code_idx = self.quantizer_spine.quantize(x[..., 4])
-            return torch.cat([left_arm_code_idx.unsqueeze(-1), right_arm_code_idx.unsqueeze(-1), left_leg_code_idx.unsqueeze(-1), \
+            x_token = torch.cat([left_arm_code_idx.unsqueeze(-1), right_arm_code_idx.unsqueeze(-1), left_leg_code_idx.unsqueeze(-1), \
                                   right_leg_code_idx.unsqueeze(-1),spine_code_idx.unsqueeze(-1)], dim=-1)
+            return x_token
 
     def preprocess(self, x):
         # (bs, T, Jx3) -> (bs, Jx3, T)

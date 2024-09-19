@@ -51,6 +51,22 @@ def initial_optim(decay_option, lr, weight_decay, net, optimizer) :
         
     return optimizer
 
+def initial_optim_tune(decay_option, lr, weight_decay, net, optimizer) : 
+    
+    if optimizer == 'adamw' : 
+        optimizer_adam_family = optim.AdamW
+    elif optimizer == 'adam' : 
+        optimizer_adam_family = optim.Adam
+
+    if decay_option == 'all':
+        #optimizer = optimizer_adam_family(net.parameters(), lr=lr, betas=(0.9, 0.999), weight_decay=weight_decay)
+        optimizer = optimizer_adam_family(net.parameters(), lr=lr, betas=(0.5, 0.9), weight_decay=weight_decay)
+        
+    elif decay_option == 'noVQ':
+        all_params = set(net)
+        optimizer = optimizer_adam_family([{'params': list(all_params), 'weight_decay': 0},], lr=lr)
+    return optimizer
+
 
 def get_motion_with_trans(motion, velocity) : 
     '''

@@ -19,7 +19,7 @@ def tensorborad_add_video_xyz(writer, xyz, nb_iter, tag, nb_vis=4, title_batch=N
     writer.add_video(tag, plot_xyz, nb_iter, fps = 20)
 
 @torch.no_grad()        
-def evaluation_vqvae(out_dir, val_loader, net, logger, writer, nb_iter, best_fid, best_iter, best_div, best_top1, best_top2, best_top3, best_matching, eval_wrapper, draw = True, save = True, savegif=False, savenpy=False) : 
+def evaluation_vqvae(out_dir, val_loader, net, logger, writer, nb_iter, best_fid, best_iter, best_div, best_top1, best_top2, best_top3, best_matching, eval_wrapper, draw = True, save = True, savegif=False, savenpy=False,wo_trajectory=False,is_decoder=False) : 
     net.eval()
     nb_sample = 0
     
@@ -41,6 +41,10 @@ def evaluation_vqvae(out_dir, val_loader, net, logger, writer, nb_iter, best_fid
         word_embeddings, pos_one_hots, caption, sent_len, motion, m_length, token, name = batch
 
         motion = motion.cuda()
+        if wo_trajectory:
+            speed = motion[:, :, 1:3].reshape(motion.shape[0], -1, 8).to(torch.float32)
+            input_motion = motion.clone()
+            input_motion[:,:,1:3] = 0
         et, em = eval_wrapper.get_co_embeddings(word_embeddings, pos_one_hots, sent_len, motion, m_length)
         bs, seq = motion.shape[0], motion.shape[1]
 
@@ -51,12 +55,15 @@ def evaluation_vqvae(out_dir, val_loader, net, logger, writer, nb_iter, best_fid
         for i in range(bs):
             pose = val_loader.dataset.inv_transform(motion[i:i+1, :m_length[i], :].detach().cpu().numpy())
             # pose_xyz = recover_from_ric(torch.from_numpy(pose).float().cuda(), num_joints)
-
-
-            pred_pose,*_ = net(motion[i:i+1, :m_length[i]])
+            if wo_trajectory:
+                if is_decoder:
+                    pred_pose,*_ = net(input_motion[i:i+1,:m_length[i]],speed[i:i+1,:m_length[i]//4])
+                else:
+                    pred_pose,*_ = net(input_motion[i:i+1,:m_length[i]])
+            else:
+                pred_pose,*_ = net(motion[i:i+1, :m_length[i]])
             # pred_denorm = val_loader.dataset.inv_transform(pred_pose.detach().cpu().numpy())
             # pred_xyz = recover_from_ric(torch.from_numpy(pred_denorm).float().cuda(), num_joints)
-            
             # if savenpy:
             #     np.save(os.path.join(out_dir, name[i]+'_gt.npy'), pose_xyz[:, :m_length[i]].cpu().numpy())
             #     np.save(os.path.join(out_dir, name[i]+'_pred.npy'), pred_xyz.detach().cpu().numpy())
@@ -356,7 +363,7 @@ def evaluation_transformer(out_dir, val_loader, net, trans, logger, writer, nb_i
     trans.train()
     return pred_pose_eval, pose, m_length, clip_text, best_fid, best_iter, best_div, best_top1, best_top2, best_top3, best_matching, multimodality, writer, logger
 @torch.no_grad()        
-def evaluation_time_transformer(out_dir, val_loader, net, trans, logger, writer, nb_iter, best_fid, best_iter, best_div, best_top1, best_top2, best_top3, best_matching, clip_model, eval_wrapper, dataname='t2m', draw = True, save = True, savegif=False, num_repeat=1, rand_pos=False, CFG=-1) : 
+def evaluation_time_transformer(out_dir, val_loader, net, trans, logger, writer, nb_iter, best_fid, best_iter, best_div, best_top1, best_top2, best_top3, best_matching, clip_model, eval_wrapper, dataname='t2m', draw = True, save = True, savegif=False, num_repeat=1, rand_pos=False, CFG=-1,is_recaption=False) : 
     if num_repeat < 0:
         is_avg_all = True
         num_repeat = -num_repeat
@@ -383,7 +390,10 @@ def evaluation_time_transformer(out_dir, val_loader, net, trans, logger, writer,
     nb_sample = 0
     blank_id = get_model(trans).num_vq
     for batch in tqdm(val_loader):
-        word_embeddings, pos_one_hots, clip_text, sent_len, pose, m_length, token, name = batch
+        if is_recaption:
+            word_embeddings, pos_one_hots, clip_text, sent_len, pose, m_length, token, name,recaption_text = batch
+        else:
+            word_embeddings, pos_one_hots, clip_text, sent_len, pose, m_length, token, name = batch
 
         bs, seq = pose.shape[:2]
         num_joints = 21 if pose.shape[-1] == 251 else 22
@@ -392,6 +402,15 @@ def evaluation_time_transformer(out_dir, val_loader, net, trans, logger, writer,
         
         feat_clip_text, word_emb = clip_model(text)
         feat_clip_text = feat_clip_text.unsqueeze(1).repeat(1,5,1)
+        feat_clip_local_texts = []
+        if is_recaption:
+            BODY_PARTS=['left arm','right arm','left leg','right leg','spine']
+            for i,body_part in enumerate(BODY_PARTS):
+                clip_local_text = recaption_text[body_part]
+                local_text = clip.tokenize(clip_local_text, truncate=True).cuda()
+                feat_clip_local_text, _ = clip_model(local_text)
+                feat_clip_local_texts.append(feat_clip_local_text)
+            feat_clip_text = torch.cat([feat_clip_text, torch.stack(feat_clip_local_texts, dim=1)], dim=-1)
         motion_multimodality_batch = []
         m_tokens_len = torch.ceil((m_length)/4)
 
@@ -439,7 +458,6 @@ def evaluation_time_transformer(out_dir, val_loader, net, trans, logger, writer,
                 et, em = eval_wrapper.get_co_embeddings(word_embeddings, pos_one_hots, sent_len, pose, m_length)
                 motion_annotation_list.append(em)
                 motion_pred_list.append(em_pred)
-
                 # if draw:
                 #     pose = val_loader.dataset.inv_transform(pose.detach().cpu().numpy())
                 #     pose_xyz = recover_from_ric(torch.from_numpy(pose).float().cuda(), num_joints)
@@ -598,7 +616,7 @@ def evaluation_time_transformer_trajectory(out_dir, val_loader, net, trans, logg
         for i in range(num_repeat):
             pred_pose_eval = torch.zeros((bs, seq, pose.shape[-1])).cuda()
             # pred_len = torch.ones(bs).long()
-            index_motion = trans(tokens.permute(0,2,1),feat_clip_text, word_emb, type="sample", m_length=pred_len, rand_pos=rand_pos, CFG=CFG, speed=speed)
+            index_motion = trans(tokens,feat_clip_text, word_emb, type="sample", m_length=pred_len, rand_pos=rand_pos, CFG=CFG, speed=speed)
             # [INFO] 1. this get the last index of blank_id
             # pred_length = (index_motion == blank_id).int().argmax(1).float()
             # [INFO] 2. this get the first index of blank_id

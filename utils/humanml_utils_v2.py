@@ -1,6 +1,8 @@
 import numpy as np
 def get_hml_joint_mask(joints,place):
     HML_binary = np.array([i in joints for i in range(NUM_HML_JOINTS)])
+    #TODO devide left foot contact and right foot contact
+    # l_foot r_foot 2+2
     if place == 'lower':
         HML_mask = np.concatenate(([True]*(1+2+1),
                                         HML_binary[1:].repeat(3),
@@ -14,6 +16,7 @@ def get_hml_joint_mask(joints,place):
                                         HML_binary.repeat(3),
                                         [False]*4))
     return HML_mask
+
 HML_JOINT_NAMES = [
     'pelvis',
     'left_hip',

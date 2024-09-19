@@ -22,6 +22,13 @@ def exists(val):
     return val is not None
 
 # classes
+def zero_module(module):
+    """
+    Zero out the parameters of a module and return it.
+    """
+    for p in module.parameters():
+        p.detach().zero_()
+    return module
 
 class PreNorm(nn.Module):
     def __init__(self, dim, fn):
@@ -177,8 +184,14 @@ class TimeSformer(nn.Module):
         if rotary_emb:
             self.frame_rot_emb = RotaryEmbedding(dim_head)
             self.image_rot_emb = AxialRotaryEmbedding(dim_head)
-            self.speed_emb = nn.Linear(8, dim_head)
+            self.speed_emb = nn.Sequential(
+            nn.Linear(8, dim_head*3),  
+            nn.ReLU(),
+            zero_module(nn.Linear(dim_head*3, dim_head))  
+            )
             self.fuse_emb = nn.Linear(dim_head*2, dim_head)
+            # self.fuse_emb.weight.data = torch.cat([torch.eye(self.dim), torch.eye(self.dim)], dim=1)
+            # self.fuse_emb.bias.data.zero_()
         else:
             self.pos_emb = nn.Embedding(num_positions + 1, dim)
 
@@ -216,7 +229,8 @@ class TimeSformer(nn.Module):
                     frame_pos_emb = list(frame_pos_emb)
                     for i in range(len(frame_pos_emb)):
                         frame_pos_emb[i] = frame_pos_emb[i].repeat(b, 1, 1)
-                        frame_pos_emb[i][:,1:,:] = self.fuse_emb(torch.cat((frame_pos_emb[i][:,1:,:], speed_emb), dim=-1))
+                        # frame_pos_emb[i][:,1:,:] = self.fuse_emb(torch.cat((frame_pos_emb[i][:,1:,:], speed_emb), dim=-1))
+                        frame_pos_emb[i][:,1:,:] =frame_pos_emb[i][:,1:,:] + speed_emb
             # calculate masking for uneven number of frames
             for (time_attn, spatial_attn, ff) in self.layers:
                 x = time_attn(x, 'b (f n) d', '(b n) f d', n = n, rot_emb = frame_pos_emb) + x
@@ -247,8 +261,10 @@ class Text2Motion_Transformer(nn.Module):
 
         # self.skip_trans = Skip_Connection_Transformer(num_vq, embed_dim, clip_dim, block_size, num_layers, n_head, drop_out_rate, fc_rate)
     def adopt_finetune(self):
-        self.trans_base.adopt_finetune()
-        self.trans_head.adopt_finetune()
+        parameters = []
+        parameters.extend(self.trans_base.adopt_finetune())
+        parameters.extend(self.trans_head.adopt_finetune())
+        return parameters
     def get_block_size(self):
         return self.block_size
 
@@ -279,7 +295,8 @@ class Text2Motion_Transformer(nn.Module):
 
         return logits
 
-    def sample(self, tokens, clip_feature, word_emb, m_length=None, if_test=False, rand_pos=True, CFG=-1, token_cond=None, max_steps=10, speed = None):
+    def sample(self, tokens, clip_feature, word_emb=None, m_length=None, if_test=False, rand_pos=True, CFG=-1, token_cond=None, max_steps=10, speed = None):
+        tokens = tokens.permute(0,2,1)
         max_length = 49
         batch_size = clip_feature.shape[0]
         mask_id = self.num_vq + 2
@@ -423,9 +440,14 @@ class Time_Block(nn.Module):
             dim_head=embed_dim//n_head,
             ff_dropout=drop_out_rate,
             attn_dropout=drop_out_rate)
+
     def adopt_finetune(self):
         self.attn.speed_emb.train()
         self.attn.fuse_emb.train()
+        self.attn.speed_emb.requires_grad_(True)
+        self.attn.fuse_emb.requires_grad_(True)
+        return (self.attn.speed_emb.parameters(),self.attn.fuse_emb.parameters())
+    
     def forward(self, x, src_mask=None, speed=None):
         output = self.attn(self.ln1(x), src_mask, speed)
         x = x + output.reshape(x.shape)
@@ -520,10 +542,13 @@ class CrossCondTransBase(nn.Module):
             self.cross_att = nn.Sequential(*[Block_crossatt(embed_dim*5, block_size, n_head, drop_out_rate, fc_rate) for _ in range(num_local_layer)])
         self.block_size = block_size
 
-        self.apply(self._init_weights)
+        #self.apply(self._init_weights)
+
     def adopt_finetune(self):
+        parameters = []
         for block in self.blocks:
-            block.adopt_finetune()
+            parameters.extend(block.adopt_finetune())
+        return parameters
 
     def get_block_size(self):
         return self.block_size
@@ -595,11 +620,13 @@ class CrossCondTransHead(nn.Module):
         self.head = nn.Linear(embed_dim, num_vq, bias=False)
         self.block_size = block_size
 
-        self.apply(self._init_weights)
+        # self.apply(self._init_weights)
 
     def adopt_finetune(self):
+        parameters = []
         for block in self.blocks:
-            block.adopt_finetune()
+            parameters.extend(block.adopt_finetune())
+        return parameters
 
     def get_block_size(self):
         return self.block_size

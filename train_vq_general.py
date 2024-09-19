@@ -18,8 +18,8 @@ warnings.filterwarnings('ignore')
 from utils.word_vectorizer import WordVectorizer
 from tqdm import tqdm
 from exit.utils import get_model, generate_src_mask, init_save_folder
-from models.vqvae_general import HumanVQVAE_GENERAL,VQVAE_decode_only
-from models.vqvae_multi import VQVAE_MULTI_V2
+from models.vqvae_general import VQVAE_decode,VQVAE_decode_speed
+from models.vqvae_multi import VQVAE_MULTI
 
 def update_lr_warm_up(optimizer, nb_iter, warm_up_iter, lr):
 
@@ -61,30 +61,25 @@ wrapper_opt = get_opt(dataset_opt_path, torch.device('cuda'))
 eval_wrapper = EvaluatorModelWrapper(wrapper_opt)
 
 
-##### ---- Dataloader ---- #####
-# train_loader = dataset_VQ.DATALoader(args.dataname,
-#                                         args.batch_size,
-#                                         window_size=args.window_size,
-#                                         unit_length=2**args.down_t)
+### ---- Dataloader ---- #####
+train_loader = dataset_VQ.DATALoader(args.dataname,
+                                        args.batch_size,
+                                        window_size=args.window_size,
+                                        unit_length=2**args.down_t)
 
-# train_loader_iter = dataset_VQ.cycle(train_loader)
+train_loader_iter = dataset_VQ.cycle(train_loader)
 
 val_loader = dataset_TM_eval.DATALoader(args.dataname, False,
                                         32,
                                         w_vectorizer,
                                         unit_length=2**args.down_t)
-##### ---- Codebook ---- #####
-#检查args.codebook_dir是否存在，如果存在则加载，否则创建一个新的
-# logger.info(f'loading codebook from {args.codebook_dir}')
-# codebook_dict = torch.load(os.path.join(args.codebook_dir, 'codebook_dict.pth'))
 
     
 ##### ---- Network ---- #####
 if args.teacher_pth:
-    teacher_net= VQVAE_MULTI_V2(args, ## use args to define different parameters in different quantizers
+    teacher_net= VQVAE_MULTI(args, ## use args to define different parameters in different quantizers
                             args.nb_code,#8192
                             args.code_dim,#32
-                            args.output_emb_width,#512
                             args.down_t,#2
                             args.stride_t,#2
                             args.width,#512
@@ -100,19 +95,32 @@ if args.teacher_pth:
     teacher_net.load_state_dict(teacher_ckpt['net'], strict=True)
     teacher_net.cuda()
     teacher_net.eval()
-net= VQVAE_decode_only(args, ## use args to define different parameters in different quantizers
+if args.wo_trajectory:
+    net = VQVAE_decode_speed(args, ## use args to define different parameters in different quantizers
                         teacher_net,
                         args.nb_code,#8192
                         args.code_dim,#32
-                        args.output_emb_width,#512
                         args.down_t,#2
-                        args.stride_t,#2
                         args.width,#512
                         args.depth,#3
                         args.dilation_growth_rate,#3
                         args.vq_act,#'relu'
                         None,#None
+                        condition_dim=8
                         )
+else:
+    net= VQVAE_decode(args, ## use args to define different parameters in different quantizers
+                            teacher_net,
+                            args.nb_code,#8192
+                            args.code_dim,#32
+                            args.down_t,#2
+                            args.stride_t,#2
+                            args.width,#512
+                            args.depth,#3
+                            args.dilation_growth_rate,#3
+                            args.vq_act,#'relu'
+                            None,#None
+                            )
 if args.resume_pth : 
     logger.info('loading checkpoint from {}'.format(args.resume_pth))
     ckpt = torch.load(args.resume_pth, map_location='cpu')
@@ -137,8 +145,12 @@ for nb_iter in tqdm(range(1, args.warm_up_iter)):
     
     gt_motion = next(train_loader_iter)
     gt_motion = gt_motion.cuda().float() # (bs, 64, dim)
-
-    pred_motion = net(gt_motion)
+    if args.wo_trajectory:
+        speed = gt_motion[:,:,1:3].reshape(gt_motion.shape[0],-1,8)
+        gt_motion[:,:,1:3] = 0.
+        pred_motion = net(gt_motion,speed)
+    else:
+        pred_motion = net(gt_motion)
     loss_motion = Loss(pred_motion, gt_motion)
     loss_vel = Loss.forward_joint(pred_motion, gt_motion)
     
@@ -166,15 +178,19 @@ for nb_iter in tqdm(range(1, args.warm_up_iter)):
 ##### ---- Training ---- #####
 # avg_recons, avg_perplexity, avg_commit,avg_classification = 0., 0., 0.,0.
 avg_recons = 0.
-best_fid, best_iter, best_div, best_top1, best_top2, best_top3, best_matching, writer, logger = eval_trans.evaluation_vqvae(args.out_dir, val_loader, net, logger, writer, 0, best_fid=1000, best_iter=0, best_div=100, best_top1=0, best_top2=0, best_top3=0, best_matching=100, eval_wrapper=eval_wrapper)
+best_fid, best_iter, best_div, best_top1, best_top2, best_top3, best_matching, writer, logger = eval_trans.evaluation_vqvae(args.out_dir, val_loader, net, logger, writer, 0, best_fid=1000, best_iter=0, best_div=100, best_top1=0, best_top2=0, best_top3=0, best_matching=100, eval_wrapper=eval_wrapper,wo_trajectory=args.wo_trajectory,is_decoder=True)
 
 for nb_iter in tqdm(range(1, args.total_iter + 1)):
     #[256,64,263]
     gt_motion = next(train_loader_iter)
     gt_motion = gt_motion.cuda().float() # bs, nb_joints, joints_dim, seq_len
     gt_idx = None
-    pred_motion = net(gt_motion)
-
+    if args.wo_trajectory:
+        speed = gt_motion[:,:,1:3].reshape(gt_motion.shape[0],-1,8)
+        gt_motion[:,:,1:3] = 0.
+        pred_motion = net(gt_motion,speed)
+    else:
+        pred_motion = net(gt_motion)
     loss_motion = Loss(pred_motion, gt_motion)
     loss_vel = Loss.forward_joint(pred_motion, gt_motion)
     
@@ -207,5 +223,5 @@ for nb_iter in tqdm(range(1, args.total_iter + 1)):
         avg_recons=0.
 
     if nb_iter % args.eval_iter==0 :
-        best_fid, best_iter, best_div, best_top1, best_top2, best_top3, best_matching, writer, logger = eval_trans.evaluation_vqvae(args.out_dir, val_loader, net, logger, writer, nb_iter, best_fid, best_iter, best_div, best_top1, best_top2, best_top3, best_matching, eval_wrapper=eval_wrapper)
+        best_fid, best_iter, best_div, best_top1, best_top2, best_top3, best_matching, writer, logger = eval_trans.evaluation_vqvae(args.out_dir, val_loader, net, logger, writer, nb_iter, best_fid, best_iter, best_div, best_top1, best_top2, best_top3, best_matching, eval_wrapper=eval_wrapper,wo_trajectory=args.wo_trajectory,is_decoder=True)
         

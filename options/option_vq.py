@@ -57,9 +57,7 @@ def get_args_parser():
     
     parser.add_argument('--vis-gt', action='store_true', help='whether visualize GT motions')
     parser.add_argument('--nb-vis', default=20, type=int, help='nb of visualizations')
-    
-    parser.add_argument('--sep-uplow', action='store_true', help='whether seperte upper and lower body')
-    parser.add_argument('--sep-multi', action='store_true', help='whether seperate multiple quantizers')
+    parser.add_argument('--wo-trajectory', action='store_true', help='without trajectory')
     parser.add_argument('--codebook-name', type=str, help='name of pretrained codebook')
     
     return parser.parse_args()

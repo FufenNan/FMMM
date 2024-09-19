@@ -60,15 +60,16 @@ class Text2MotionDataset(data.Dataset):
         data_dict = {}
         new_name_list_speed = []
         data_dict_speed = {}
-        #for quicker test
+        # for quicker test
         # from itertools import islice
         # for name in tqdm(islice(id_list, 1000)):
         for name in tqdm(id_list):
             try:
-                #TODO npz
+                #TODO
                 m_token_wo_speed_list = np.load(pjoin(tokenizer_name_tune, '%s_wo_speed.npy'%name))
                 speed_list = np.load(pjoin(tokenizer_name_tune, '%s_speed.npy'%name))
-                m_token_list = np.load(pjoin(tokenizer_name, '%s.npy'%name))
+                m_token_list = np.load(pjoin(tokenizer_name_tune, '%s.npy'%name))
+                assert m_token_list.shape[:-1] == m_token_wo_speed_list.shape[:-1] == speed_list.shape[:-1]
                 # Read text
                 with cs.open(pjoin(self.text_dir, name + '.txt')) as f:
                     text_data = []
@@ -93,25 +94,22 @@ class Text2MotionDataset(data.Dataset):
                                 text_data.append(text_dict)
                             else:
                                 m_token_list_new = [tokens[int(f_tag*fps/unit_length) : int(to_tag*fps/unit_length)] for tokens in m_token_list if int(f_tag*fps/unit_length) < int(to_tag*fps/unit_length)]
-                                if len(m_token_list_new) == 0:
-                                    continue
-
                                 m_token_wo_speed_list_new = [tokens[int(f_tag*fps/unit_length) : int(to_tag*fps/unit_length)] for tokens in m_token_wo_speed_list if int(f_tag*fps/unit_length) < int(to_tag*fps/unit_length)]
-                                if len(m_token_wo_speed_list_new) == 0:
-                                    continue 
-
+                                speed_list_new = [speed[int(f_tag*fps/unit_length) : int(to_tag*fps/unit_length)] for speed in speed_list if int(f_tag*fps/unit_length) < int(to_tag*fps/unit_length)]
+                                if len(m_token_list_new) == 0 or len(m_token_wo_speed_list_new) == 0 or len(speed_list_new) == 0:
+                                    continue
                                 new_name = '%s_%f_%f'%(name, f_tag, to_tag)
+                                assert m_token_list_new.shape[:-1] == m_token_wo_speed_list_new.shape[:-1] == speed_list_new.shape[:-1]
                                 data_dict[new_name] = {
                                     'm_token_list': m_token_list_new,
                                     'm_token_wo_speed_list': m_token_wo_speed_list_new,
+                                    'speed' : speed_list_new,
                                     'text': [text_dict]
                                 }
                                 new_name_list.append(new_name)
-                                
-                                speed_list_new = [speed[int(f_tag*fps/unit_length) : int(to_tag*fps/unit_length)] for speed in speed_list if int(f_tag*fps/unit_length) < int(to_tag*fps/unit_length)]
-                                new_name_speed = '%s_speed_%f_%f'%(name, f_tag, to_tag)
-                                data_dict_speed[new_name_speed] = {'m_token_list': speed_list_new}
-                                new_name_list_speed.append(new_name_speed)
+                                # new_name_speed = '%s_speed_%f_%f'%(name, f_tag, to_tag)
+                                # data_dict_speed[new_name_speed] = {'m_token_list': speed_list_new}
+                                # new_name_list_speed.append(new_name_speed)
 
                         except:
                             pass
@@ -120,33 +118,30 @@ class Text2MotionDataset(data.Dataset):
                     data_dict[name] = {
                         'm_token_list': m_token_list,
                         'm_token_wo_speed_list': m_token_wo_speed_list,
+                        'speed' : speed_list,
                         'text': [text_dict]
                     }
                     new_name_list.append(name)
-                    data_dict_speed[name] = {'m_token_list': speed_list}
-                    new_name_list_speed.append(name)
+                    # data_dict_speed[name] = {'m_token_list': speed_list}
+                    # new_name_list_speed.append(name)
             except:
                 pass
         self.data_dict = data_dict
         self.name_list = new_name_list
-        self.data_dict_speed = data_dict_speed
-        self.name_list_speed = new_name_list_speed
+        # self.data_dict_speed = data_dict_speed
+        # self.name_list_speed = new_name_list_speed
 
     def __len__(self):
         return len(self.data_dict)
 
     def __getitem__(self, item):
-
         data = self.data_dict[self.name_list[item]]
-        m_token_list, m_token_wo_speed_list, text_list = data['m_token_list'], data['m_token_wo_speed_list'], data['text']
-        data_speed = self.data_dict_speed[self.name_list_speed[item]]
-        m_token_list_speed = data_speed['m_token_list']
-        assert len(m_token_list) == len(m_token_list_speed), "Token lists must have the same length"
-        index = random.randint(0, len(m_token_list) - 1)
-        m_tokens = m_token_list[index]
-        m_tokens_wo_speed = m_token_wo_speed_list[index]
-        m_tokens_speed = m_token_list_speed[index]
-        text_data = text_list[index]
+        m_token_list, m_token_wo_speed_list, data_speed, text_list = data['m_token_list'], data['m_token_wo_speed_list'],data['speed'], data['text']
+        m_tokens = random.choice(m_token_list)
+        m_tokens_wo_speed = random.choice(m_token_wo_speed_list)
+        #TODO check speed
+        m_tokens_speed = random.choice(data_speed)
+        text_data = random.choice(text_list)
         caption = text_data['caption']
 
         coin = np.random.choice([False, False, True])
